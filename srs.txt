@@ -1,0 +1,1199 @@
+SRS — RepoLens AI
+
+Software Requirements Specification
+
+Project: RepoLens AI
+Version: 1.0.0
+Date: 17/09/2026
+Target: MVP
+Development Approach: AI-Driven Development / Spec-Driven Development
+Team size: 5 members
+Primary stack: .NET 10 + Next.js + PostgreSQL
+
+1. Giới thiệu
+1.1. Mục đích
+
+RepoLens AI là hệ thống hỗ trợ người dùng hiểu một repository/project phần mềm mà họ chưa quen thuộc bằng cách kết hợp:
+
+Source code analysis
+Static analysis
+Dependency analysis
+Architecture analysis
+API analysis
+Database analysis
+Knowledge model
+Retrieval-Augmented Generation (RAG)
+AI-generated explanation
+Evidence/traceability
+
+Người dùng cung cấp:
+
+Git repository URL, hoặc
+Project ZIP file.
+
+Hệ thống sẽ đọc và phân tích source code, xây dựng thông tin cấu trúc của repository và cung cấp giao diện trực quan kết hợp AI Chat để giải thích project.
+
+2. Vấn đề cần giải quyết
+
+Khi tiếp cận một project lớn hoặc project của người khác, developer mới thường phải mất nhiều thời gian để tìm hiểu:
+
+Project có những module nào?
+Entry point nằm ở đâu?
+Các project phụ thuộc nhau như thế nào?
+API endpoint nằm ở đâu?
+Class/service nào gọi class/service nào?
+Database entity/table nào tồn tại?
+Một chức năng đi qua những file nào?
+Một file/class có vai trò gì?
+Kiến trúc tổng thể của project là gì?
+
+RepoLens AI nhằm giảm thời gian tìm hiểu bằng cách tự động phân tích repository và giải thích dựa trên bằng chứng thực tế từ source code.
+
+3. Mục tiêu sản phẩm
+3.1. Mục tiêu chính
+
+RepoLens AI MVP phải cho phép người dùng:
+
+Upload ZIP hoặc nhập Git URL.
+Tạo một analysis.
+Theo dõi trạng thái phân tích.
+Xem tổng quan repository.
+Xem architecture.
+Xem dependency graph.
+Xem API endpoints.
+Xem database structure nếu phát hiện được.
+Duyệt file và symbol.
+Xem evidence cho các kết luận phân tích.
+Đặt câu hỏi với AI về repository.
+Nhận câu trả lời dựa trên source/evidence.
+Biết mức độ confidence của câu trả lời.
+3.2. Nguyên tắc cốt lõi
+
+AI explains the repository; static analysis establishes what actually exists.
+
+AI không được coi là nguồn sự thật duy nhất.
+
+Static analysis và repository evidence là cơ sở để xác định thông tin thực tế.
+
+4. Phạm vi MVP
+4.1. In Scope
+Repository ingestion
+Public GitHub repository URL.
+ZIP upload.
+Validate input.
+Acquire repository.
+Extract ZIP an toàn.
+Giới hạn resource.
+Read-only source analysis.
+Repository analysis
+Detect programming languages.
+Detect project structure.
+Detect project files.
+Detect source files.
+Detect classes/interfaces/methods/functions.
+Detect dependencies.
+Detect API endpoints.
+Detect database entities/schema information khi có evidence.
+Supported languages
+
+MVP ưu tiên:
+
+C#
+TypeScript
+JavaScript
+
+Trong đó:
+
+C# là ngôn ngữ phân tích chính của MVP.
+
+Knowledge model
+
+Hệ thống xây dựng model thống nhất của repository.
+
+Các node chính:
+
+Repository
+Project
+File
+CodeSymbol
+Class
+Interface
+Method
+Dependency
+ApiEndpoint
+DatabaseEntity
+DatabaseRelationship
+Evidence
+
+Các relationship chính:
+
+CONTAINS
+DEFINES
+DEPENDS_ON
+IMPLEMENTS
+INHERITS
+CALLS
+EXPOSES
+MAPS_TO
+READS
+WRITES
+Visualization
+
+MVP cung cấp:
+
+Overview
+Architecture graph
+Dependency graph
+API explorer
+Database explorer
+File explorer
+Symbol details
+Evidence explorer
+AI/RAG
+
+AI phải có khả năng:
+
+Giải thích repository.
+Giải thích architecture.
+Giải thích file/class/method.
+Giải thích dependency.
+Giải thích API.
+Trả lời câu hỏi về code.
+Trích dẫn evidence/source.
+Nêu uncertainty khi không đủ evidence.
+5. Ngoài phạm vi MVP
+
+Không triển khai trong MVP:
+
+Private GitHub repositories.
+IDE plugin.
+Pull Request review.
+Automatic code modification.
+Automatic bug fixing.
+Full vulnerability scanner.
+Deployment infrastructure.
+Multi-user collaboration.
+Real-time collaboration.
+Support tất cả programming languages.
+Production-scale distributed processing.
+Message broker bắt buộc.
+Kubernetes.
+Advanced enterprise authentication.
+
+Các công nghệ như Redis, RabbitMQ, MinIO, Seq... không được tự ý thêm vào MVP nếu không có requirement tương ứng.
+
+6. Người dùng hệ thống
+6.1. Developer / Student / Newcomer
+
+Người dùng chính.
+
+Có thể:
+
+Submit repository.
+Xem analysis.
+Explore architecture.
+Explore dependencies.
+Explore APIs.
+Explore database.
+Browse files/symbols.
+Hỏi AI.
+7. Functional Requirements
+FR-001 — Repository Input
+
+Hệ thống phải cho phép người dùng cung cấp repository bằng:
+
+Git URL
+ZIP file
+Git URL
+
+Hệ thống phải:
+
+Validate URL.
+Xác định repository hợp lệ.
+Clone/read repository.
+Không thực thi code repository.
+ZIP
+
+Hệ thống phải:
+
+Validate file.
+Extract an toàn.
+Chặn path traversal.
+Có giới hạn kích thước.
+Có giới hạn số lượng file.
+8. FR-002 — Analysis Lifecycle
+
+Mỗi repository analysis phải có lifecycle:
+
+Created
+   ↓
+Acquiring
+   ↓
+Scanning
+   ↓
+Analyzing
+   ↓
+Indexing
+   ↓
+Completed
+
+Có thể chuyển sang:
+
+Failed
+
+nếu analysis thất bại.
+
+Hệ thống phải lưu trạng thái để frontend có thể theo dõi.
+
+9. FR-003 — Repository Scanning
+
+Hệ thống phải scan repository để xác định:
+
+File.
+Directory.
+Language.
+Project.
+Configuration.
+Project metadata.
+
+Hệ thống phải có ignore rules cho các thư mục/file không phù hợp.
+
+Ví dụ:
+
+.git
+bin
+obj
+node_modules
+dist
+build
+
+Không được gửi các file nhạy cảm tới AI.
+
+10. FR-004 — Static Code Analysis
+
+Hệ thống phải phân tích source code.
+
+Đối với C#, ưu tiên sử dụng:
+
+Roslyn
+Syntax tree
+Semantic model khi cần.
+
+Phải có khả năng phát hiện:
+
+Namespace.
+Class.
+Interface.
+Struct.
+Enum.
+Method.
+Property.
+Field.
+Inheritance.
+Interface implementation.
+Method calls.
+Project references.
+
+Đối với TypeScript/JavaScript, hệ thống phải hỗ trợ mức phân tích phù hợp với MVP.
+
+11. FR-005 — Dependency Analysis
+
+Hệ thống phải xây dựng dependency graph.
+
+Ví dụ:
+
+API
+ ↓
+Application
+ ↓
+Domain
+
+Infrastructure
+ ↓
+Application
+ ↓
+Domain
+
+Graph phải cho phép người dùng:
+
+Xem node.
+Xem relationship.
+Xem source/evidence của relationship.
+12. FR-006 — Architecture Analysis
+
+Hệ thống phải cung cấp architecture overview.
+
+Architecture visualization phải dựa trên:
+
+Project references.
+Detected namespaces.
+Detected dependencies.
+Known architectural patterns khi có evidence.
+
+AI không được tự tạo architecture nếu static analysis không chứng minh được.
+
+Nếu không xác định được:
+
+Insufficient evidence
+
+13. FR-007 — API Analysis
+
+Hệ thống phải phát hiện API endpoint khi có thể.
+
+Thông tin endpoint có thể bao gồm:
+
+HTTP Method
+Route
+Controller
+Action
+Parameters
+Response
+Source File
+Evidence
+
+Ví dụ:
+
+GET /api/repositories/{id}
+
+Hệ thống phải liên kết endpoint với source code tương ứng.
+
+14. FR-008 — Database Analysis
+
+Hệ thống phải phát hiện database information từ source code/configuration khi có evidence.
+
+Có thể bao gồm:
+
+Entity
+Table
+Column
+Relationship
+Foreign Key
+
+Nếu repository không cung cấp đủ evidence:
+
+Unknown / Insufficient evidence
+
+Không được hallucinate database schema.
+
+15. FR-009 — File Explorer
+
+Người dùng phải có thể:
+
+Xem directory tree.
+Xem file.
+Xem language.
+Xem symbols.
+Xem metadata.
+16. FR-010 — Symbol Explorer
+
+Người dùng có thể chọn symbol.
+
+Ví dụ:
+
+Class
+Interface
+Method
+Property
+Function
+
+Hệ thống hiển thị:
+
+Tên.
+Loại.
+File.
+Namespace/module.
+Relationships.
+References.
+Evidence.
+17. FR-011 — Evidence
+
+Evidence là thành phần bắt buộc của hệ thống.
+
+Mỗi kết luận quan trọng phải có khả năng truy ngược về:
+
+Repository
+→ File
+→ Symbol
+→ Source location
+
+Evidence có thể chứa:
+
+File path.
+Symbol.
+Line range nếu xác định được.
+Analysis rule.
+Relationship.
+Source excerpt metadata.
+
+AI không được coi một inference không có evidence là fact.
+
+18. FR-012 — AI Chat
+
+Người dùng có thể hỏi AI về repository.
+
+Ví dụ:
+
+Project này có kiến trúc gì?
+
+Request login đi qua những file nào?
+
+Class UserService được sử dụng ở đâu?
+
+API nào xử lý contract?
+
+Database entity nào liên quan đến User?
+
+AI phải sử dụng repository knowledge/evidence để trả lời.
+
+19. FR-013 — AI Grounding
+
+AI phải:
+
+Retrieve relevant repository knowledge.
+Retrieve source/evidence.
+Generate answer.
+Validate answer against available evidence.
+
+Nếu không đủ evidence:
+
+Insufficient evidence.
+
+Không được bịa:
+
+File.
+Class.
+Method.
+API.
+Database table.
+Dependency.
+Implementation detail.
+20. FR-014 — AI Confidence
+
+Câu trả lời AI có thể có:
+
+High
+Medium
+Low
+Unknown
+
+Confidence phải dựa trên evidence.
+
+Không được dùng confidence để biến một suy đoán thành fact.
+
+21. FR-015 — Analysis Overview API
+
+Backend phải cung cấp API cho:
+
+POST /api/analyses
+GET  /api/analyses/{id}
+GET  /api/analyses/{id}/overview
+22. FR-016 — Architecture API
+GET /api/analyses/{id}/architecture
+
+Trả về architecture nodes/relationships và evidence liên quan.
+
+23. FR-017 — Dependency API
+GET /api/analyses/{id}/dependencies
+24. FR-018 — API Explorer API
+GET /api/analyses/{id}/endpoints
+25. FR-019 — Database Explorer API
+GET /api/analyses/{id}/database
+26. FR-020 — File Explorer API
+GET /api/analyses/{id}/files
+27. FR-021 — Symbol API
+GET /api/analyses/{id}/symbols/{symbolId}
+28. FR-022 — Evidence API
+GET /api/analyses/{id}/evidence
+29. FR-023 — AI Chat API
+POST /api/analyses/{id}/chat
+
+Request chứa câu hỏi của user.
+
+Response phải chứa:
+
+Answer.
+Relevant evidence.
+Confidence.
+References nếu có.
+30. Non-Functional Requirements
+NFR-001 — Security
+
+Repository phải được xử lý như untrusted input.
+
+Không được:
+
+Execute arbitrary repository code.
+Execute scripts từ repository.
+Load malicious binaries.
+Expose secrets cho AI.
+NFR-002 — ZIP Security
+
+ZIP extraction phải chống:
+
+Path traversal.
+Zip bombs.
+Excessive file count.
+Excessive file size.
+NFR-003 — Secret Protection
+
+Các file như:
+
+.env
+*.pem
+*.key
+secrets.*
+credentials.*
+
+và các credential/config nhạy cảm phải được loại khỏi AI indexing khi phát hiện.
+
+31. NFR-004 — Repository Isolation
+
+Analysis của repository A không được làm lộ dữ liệu cho repository B.
+
+Knowledge/RAG phải có:
+
+AnalysisId / RepositoryId
+
+làm boundary.
+
+32. NFR-005 — Read-only Analysis
+
+RepoLens chỉ đọc repository.
+
+MVP không được tự động:
+
+sửa source code
+commit code
+push code
+tạo PR.
+33. NFR-006 — Traceability
+
+Các thông tin do static analysis tạo ra phải có khả năng truy nguyên về source.
+
+34. NFR-007 — Simplicity
+
+MVP ưu tiên:
+
+Clean Architecture.
+Simple components.
+Minimal infrastructure.
+Không thêm distributed systems khi chưa cần.
+35. Kiến trúc hệ thống
+Backend
+RepoLens.Api
+       ↓
+RepoLens.Application
+       ↓
+RepoLens.Domain
+
+RepoLens.Infrastructure
+       ↓
+Application + Domain
+
+RepoLens.Analysis
+       ↓
+Domain
+Frontend
+Next.js
+   ↓
+Backend REST API
+
+Frontend sử dụng:
+
+Next.js
+TypeScript
+Tailwind CSS
+React Flow
+36. Database
+
+MVP sử dụng:
+
+PostgreSQL
+
+Sau khi hoàn thiện foundation:
+
+EF Core
+   ↓
+Npgsql
+   ↓
+PostgreSQL
+
+pgvector chỉ được sử dụng khi triển khai phần vector/RAG theo task tương ứng.
+
+37. Domain Model dự kiến
+
+Các entity chính:
+
+Repository
+Analysis
+Project
+SourceFile
+CodeSymbol
+Dependency
+ApiEndpoint
+DatabaseEntity
+DatabaseRelationship
+Evidence
+AnalysisIssue
+DocumentChunk
+
+Lưu ý: các entity này là requirements của SRS; không có nghĩa phải tạo tất cả ngay ở T010.
+
+38. Repository Lifecycle
+Created
+   │
+   ▼
+Acquiring
+   │
+   ▼
+Scanning
+   │
+   ▼
+Analyzing
+   │
+   ▼
+Indexing
+   │
+   ▼
+Completed
+
+Failure ở bất kỳ stage nào:
+
+Failed
+39. Frontend Requirements
+
+Frontend MVP gồm:
+
+/
+├── Home
+│
+├── /analyze
+│
+└── /projects/{id}
+    ├── overview
+    ├── architecture
+    ├── dependencies
+    ├── apis
+    ├── database
+    ├── files
+    └── chat
+Overview
+
+Hiển thị:
+
+Repository information.
+Languages.
+Projects.
+File statistics.
+Analysis status.
+Architecture
+
+Hiển thị graph.
+
+Dependencies
+
+Hiển thị dependency graph.
+
+APIs
+
+Hiển thị endpoint list/detail.
+
+Database
+
+Hiển thị entities/relationships nếu có evidence.
+
+Files
+
+Hiển thị repository tree.
+
+Chat
+
+Hiển thị AI conversation + evidence.
+
+40. AI/RAG Architecture
+
+Pipeline:
+
+Repository
+     ↓
+Scanner
+     ↓
+Static Analysis
+     ↓
+Knowledge Model
+     ↓
+Chunks
+     ↓
+Embeddings
+     ↓
+Vector Index
+     ↓
+Retriever
+     ↓
+Evidence
+     ↓
+LLM
+     ↓
+Evidence Validation
+     ↓
+Answer
+
+Nguyên tắc:
+
+Retrieval trước — generation sau.
+
+41. Phân chia 5 thành viên
+
+Đây là phần mình khuyên bạn dùng để chia branch và giao task chính thức.
+
+Người 1 — Repository Acquisition & Analysis Pipeline
+Phụ trách
+Git URL
+ZIP upload
+Repository acquisition
+Scanner
+Ignore rules
+Language detection
+Project detection
+Analysis lifecycle
+Các task chính
+Repository input.
+Git clone/read.
+ZIP extraction.
+Security validation.
+File scanner.
+Language detector.
+Project detector.
+Pipeline orchestration.
+Không làm
+AI/RAG.
+Frontend.
+Database explorer.
+Authentication.
+UI visualization.
+42. Người 2 — Static Analysis & Knowledge Model
+Phụ trách
+C# Roslyn
+TypeScript
+JavaScript
+Symbol analysis
+Dependency analysis
+API analysis
+Database analysis
+Knowledge graph
+Evidence
+Trọng tâm
+Repository
+ ↓
+Files
+ ↓
+Symbols
+ ↓
+Relationships
+ ↓
+Evidence
+
+Đây là phần tạo ra source of truth cho AI.
+
+Không làm
+Frontend.
+LLM/RAG.
+Repository acquisition.
+UI.
+43. Người 3 — Backend Persistence & Query APIs
+Phụ trách
+EF Core
+PostgreSQL
+DbContext
+Migrations
+Persistence
+Query services
+REST APIs
+Công việc
+T010 DbContext.
+T011 migrations.
+Domain persistence.
+Repository/query implementation.
+Analysis query APIs.
+Architecture API.
+Dependency API.
+API explorer.
+Database explorer.
+File/symbol/evidence APIs.
+Lưu ý
+
+Người 3 là người bị ảnh hưởng trực tiếp bởi T010 đang lỗi.
+
+Vì vậy T010 nên được sửa/hoàn thiện trước khi người 3 triển khai sâu persistence.
+
+44. Người 4 — Frontend & Visualization
+Phụ trách
+Next.js
+TypeScript
+Tailwind
+React Flow
+Dashboard
+Graphs
+Explorers
+Chat UI
+Pages
+/analyze
+/projects/{id}/overview
+/projects/{id}/architecture
+/projects/{id}/dependencies
+/projects/{id}/apis
+/projects/{id}/database
+/projects/{id}/files
+/projects/{id}/chat
+Trọng tâm
+
+Frontend không tự suy luận architecture.
+
+Frontend chỉ visualization dữ liệu backend trả về.
+
+45. Người 5 — AI / RAG / Evidence
+Phụ trách
+Document chunking
+Embeddings
+Vector search
+Retriever
+RAG
+Prompting
+Evidence grounding
+Answer validation
+Confidence
+AI evaluation
+Pipeline
+Knowledge Model
+      ↓
+Chunking
+      ↓
+Embedding
+      ↓
+Vector Store
+      ↓
+Retriever
+      ↓
+Evidence
+      ↓
+LLM
+      ↓
+Validation
+      ↓
+Answer
+Người 5 không được
+tự tạo architecture facts.
+tự tạo database facts.
+bypass static analysis.
+trả lời nếu không có evidence.
+sửa source code repository.
+46. Dependency giữa 5 người
+
+Có thể hình dung:
+
+                ┌─────────────────────┐
+                │      Người 1        │
+                │ Acquisition/Scanner │
+                └──────────┬──────────┘
+                           │
+                           ▼
+                ┌─────────────────────┐
+                │      Người 2        │
+                │  Static Analysis    │
+                │ Knowledge + Evidence│
+                └───────┬─────┬───────┘
+                        │     │
+             ┌──────────┘     └──────────┐
+             ▼                           ▼
+   ┌───────────────────┐       ┌──────────────────┐
+   │     Người 3       │       │     Người 5      │
+   │ Persistence/API   │       │ AI/RAG/Evidence  │
+   └─────────┬─────────┘       └──────────────────┘
+             │
+             ▼
+   ┌───────────────────┐
+   │     Người 4       │
+   │ Frontend/Graph/UI │
+   └───────────────────┘
+
+Nhưng không cần làm tuần tự hoàn toàn.
+
+47. Chia branch
+
+Mỗi người nên có branch riêng:
+
+main
+│
+├── feat/person1-acquisition
+├── feat/person2-analysis
+├── feat/person3-backend
+├── feat/person4-frontend
+└── feat/person5-ai-rag
+
+Không nên để 5 người cùng code trực tiếp trên main.
+
+Đặc biệt, không merge tất cả cùng lúc. Mỗi PR/merge phải build + test trước.
+
+48. Thứ tự triển khai đề xuất
+Phase 0 — Foundation
+
+Đã thực hiện:
+
+T001 ✅
+T002 ✅
+T003 ✅
+T004 ✅
+T005 ✅
+T006 ✅
+T007 ✅
+T008 ✅
+T009 ✅
+
+Hiện tại:
+
+T010 ⏳
+Phase 1 — Infrastructure
+T010 EF Core DbContext
+T011 Migration
+T012 Docker
+T013 DI
+T014 Logging
+
+Phần này nên do Người 3 phối hợp xử lý.
+
+Phase 2 — Domain
+Repository
+Analysis
+Project
+SourceFile
+CodeSymbol
+Dependency
+Evidence
+...
+
+Người 2 + Người 3 phối hợp, nhưng Domain model phải thống nhất trước khi mỗi người tự tạo entity.
+
+Phase 3 — Acquisition
+
+Người 1:
+
+Git
+ZIP
+Scanner
+Ignore
+Language
+Project detection
+Pipeline
+Phase 4 — Static Analysis
+
+Người 2:
+
+C#
+TS
+JS
+Symbol
+Dependency
+API
+Database
+Evidence
+Knowledge
+Phase 5 — Backend API
+
+Người 3:
+
+Overview
+Architecture
+Dependencies
+Endpoints
+Database
+Files
+Symbols
+Evidence
+Phase 6 — Frontend
+
+Người 4:
+
+Dashboard
+Architecture graph
+Dependency graph
+API explorer
+Database explorer
+File explorer
+Symbol explorer
+Phase 7 — AI/RAG
+
+Người 5:
+
+Chunk
+Embedding
+Vector
+Retrieval
+RAG
+Evidence
+Validation
+Confidence
+49. Definition of Done
+
+Một feature chỉ được coi là hoàn thành khi:
+
+Code compile.
+Unit tests pass.
+Integration tests pass nếu có.
+Không phá dependency architecture.
+Không thêm package không cần thiết.
+Có evidence nếu feature liên quan analysis.
+Không hard-code secrets.
+Không sửa code ngoài scope.
+Có commit message rõ ràng.
+Có report.
+50. Quy tắc làm việc với AI
+
+Mỗi task giao cho Claude Code phải yêu cầu:
+
+1. Read SRS
+2. Read relevant spec
+3. Read task
+4. Inspect existing implementation
+5. Modify only task scope
+6. Run tests
+7. Run build
+8. Inspect git diff
+9. Report created files
+10. Report modified files
+11. Report deleted files
+12. Report tests
+13. Report warnings/errors
+14. Report blockers
+15. Do not commit unless explicitly instructed
+51. Quy tắc Evidence
+
+Đây là requirement quan trọng nhất của RepoLens AI.
+
+Không được có logic kiểu:
+
+AI nghĩ project dùng Clean Architecture
+        ↓
+hiển thị Clean Architecture
+
+Mà phải là:
+
+Static Analysis
+      ↓
+Project References
+      ↓
+Evidence
+      ↓
+Architecture Model
+      ↓
+UI / AI
+
+AI chỉ giải thích những gì hệ thống có cơ sở xác định.
+
+52. Quy tắc khi không xác định được
+
+Nếu source code không đủ thông tin:
+
+Insufficient evidence
+
+Nếu có inference nhưng chưa chắc chắn:
+
+Confidence: Low
+
+Không được biến inference thành fact.
+
+53. Acceptance Criteria MVP
+
+MVP được coi là đạt khi người dùng có thể:
+
+AC-001
+
+Nhập public Git repository URL.
+
+AC-002
+
+Upload repository ZIP.
+
+AC-003
+
+Hệ thống phân tích repository thành công.
+
+AC-004
+
+Hiển thị repository overview.
+
+AC-005
+
+Hiển thị architecture graph.
+
+AC-006
+
+Hiển thị dependency graph.
+
+AC-007
+
+Hiển thị API endpoints nếu phát hiện được.
+
+AC-008
+
+Hiển thị database information nếu có evidence.
+
+AC-009
+
+Browse files và symbols.
+
+AC-010
+
+Đặt câu hỏi về repository.
+
+AC-011
+
+AI trả lời dựa trên repository evidence.
+
+AC-012
+
+AI không bịa source/file/class/API/database information.
+
+AC-013
+
+Người dùng có thể xem evidence của câu trả lời.
+
+AC-014
+
+Analysis của repository này không làm lộ dữ liệu của repository khác.
+
+AC-015
+
+Repository code không được tự động execute hoặc modify.
+
+54. Kết luận phạm vi
+
+RepoLens AI MVP =
+
+             Git URL / ZIP
+                    │
+                    ▼
+            Repository Scanner
+                    │
+                    ▼
+           Static Code Analysis
+                    │
+        ┌───────────┼───────────┐
+        ▼           ▼           ▼
+   Architecture  Dependency   API/DB
+        │           │           │
+        └───────────┼───────────┘
+                    ▼
+             Knowledge Model
+                    │
+                 Evidence
+                    │
+          ┌─────────┴─────────┐
+          ▼                   ▼
+     Visualization          RAG
+                              │
+                              ▼
+                             AI
+                              │
+                              ▼
+                    Evidence-grounded
+                         Explanation
