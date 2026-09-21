@@ -58,18 +58,21 @@ Look for:
 - Navigation properties and foreign key definitions
 
 ### 4. Evidence Construction
-For every extracted entity, construct an `Evidence` record:
-
-> [!NOTE]
-> **ILLUSTRATIVE, chưa có trong code**: Đoạn mã dưới đây là minh họa thiết kế theo đặc tả (Task T023/T040). Class `Evidence` và enum `EvidenceType` chưa được hiện thực trong `src/RepoLens.Domain`. Khi triển khai, cần kiểm tra code thực tế hoặc tạo các class này theo đúng task spec.
+For every extracted entity, construct an `Evidence` entity with `SourceLocation` and `ConfidenceScore`:
 
 ```csharp
-var evidence = new Evidence(
+var location = new SourceLocation(
     filePath: relativeFilePath,
     startLine: lineSpan.StartLinePosition.Line + 1,
-    endLine: lineSpan.EndLinePosition.Line + 1,
+    endLine: lineSpan.EndLinePosition.Line + 1
+);
+
+var evidence = Evidence.Create(
+    analysisJobId: analysisJobId,
+    location: location,
     snippet: node.ToString(),
     evidenceType: EvidenceType.Declaration,
-    confidence: 1.0f
+    confidence: ConfidenceScore.Exact,
+    symbol: node.Identifier.Text
 );
 ```

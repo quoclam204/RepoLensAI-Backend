@@ -11,21 +11,23 @@ The core principle is:
 
 ## Evidence Model Specification
 
-> [!NOTE]
-> **ILLUSTRATIVE, chưa có trong code**: Cấu trúc dữ liệu và enum dưới đây là minh họa thiết kế theo đặc tả kỹ thuật (Task T023-T025). Các entity và enum này chưa có trong mã nguồn hiện tại của `RepoLens.Domain`. Khi code, cần kiểm tra code thực tế hoặc tạo các class này theo đúng task spec.
-
-Every piece of extracted knowledge or architectural claim must link to one or more `Evidence` records:
-- **`FilePath`**: Relative path from repository root (forward-slash normalized: `src/RepoLens.Api/Program.cs`).
-- **`StartLine`**: 1-indexed start line number.
-- **`EndLine`**: 1-indexed end line number (`StartLine <= EndLine`).
+Every piece of extracted knowledge or architectural claim links to an `Evidence` entity (`RepoLens.Domain.Entities.Evidence`):
+- **`Id`**: Unique Guid identifier.
+- **`AnalysisJobId`**: Guid of the parent analysis job.
+- **`Location`** (`SourceLocation` Value Object):
+  - `FilePath`: Relative path from repository root (forward-slash normalized: `src/RepoLens.Api/Program.cs`).
+  - `StartLine`: 1-indexed start line number ($\ge 1$).
+  - `EndLine`: 1-indexed end line number ($\ge StartLine$).
 - **`Snippet`**: Exact source snippet extracted from the repository snapshot.
-- **`EvidenceType`**:
+- **`EvidenceType`** (`EvidenceType` Enum):
   - `Declaration`: Class, interface, record, method, or property definition.
   - `Invocation`: Method call, service instantiation, event publishing.
   - `Configuration`: AppSettings, `.env`, dependency injection registration, launchSettings.
-  - `Dependency`: Project reference, NuGet package reference, npm dependency.
+  - `Dependency`: Project reference, NuGet package reference, package dependency.
   - `Route`: HTTP endpoint or routing declaration.
-- **`Confidence`**: Float value from 0.0 to 1.0.
+  - `Database`: EF Core DbContext, DbSet, or entity schema declaration.
+- **`Confidence`** (`ConfidenceScore` Value Object): Float value from 0.0 to 1.0.
+- **`Symbol`**: Optional name of the extracted symbol (e.g. class or method name).
 
 ## Validation Rules
 
