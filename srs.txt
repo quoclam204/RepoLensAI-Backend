@@ -920,17 +920,7 @@ Nhưng không cần làm tuần tự hoàn toàn.
 
 47. Chia branch
 
-Mỗi người nên có branch riêng:
-
-main
-│
-├── feat/acquisition
-├── feat/analysis
-├── feat/backend
-├── feat/frontend
-└── feat/ai-rag
-
-Không nên để 5 người cùng code trực tiếp trên main.
+Mỗi thành viên làm trên branch riêng. Merge qua review/validation thay vì code trực tiếp trên main. Chia be và fe thành hai repo riêng.
 
 Đặc biệt, không merge tất cả cùng lúc. Mỗi PR/merge phải build + test trước.
 
