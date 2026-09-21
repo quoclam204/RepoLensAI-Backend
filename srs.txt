@@ -924,11 +924,11 @@ Mỗi người nên có branch riêng:
 
 main
 │
-├── feat/person1-acquisition
-├── feat/person2-analysis
-├── feat/person3-backend
-├── feat/person4-frontend
-└── feat/person5-ai-rag
+├── feat/acquisition
+├── feat/analysis
+├── feat/backend
+├── feat/frontend
+└── feat/ai-rag
 
 Không nên để 5 người cùng code trực tiếp trên main.
 
