@@ -14,6 +14,7 @@ public class DocumentChunkConfiguration : IEntityTypeConfiguration<DocumentChunk
 
         // NFR-004 Repository Isolation: Index on AnalysisId
         builder.HasIndex(c => c.AnalysisId);
+
         builder.HasIndex(c => c.SourceFileId);
 
         builder.Property(c => c.Content)
@@ -25,6 +26,10 @@ public class DocumentChunkConfiguration : IEntityTypeConfiguration<DocumentChunk
 
         builder.Property(c => c.ChunkIndex)
             .IsRequired();
+
+        // T084: Embedding vector mapped to PostgreSQL pgvector(1536)
+        builder.Property(c => c.Embedding)
+            .HasColumnType("vector(1536)");
 
         builder.HasOne(c => c.Analysis)
             .WithMany(a => a.DocumentChunks)

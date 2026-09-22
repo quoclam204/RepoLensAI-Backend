@@ -1,3 +1,5 @@
+using RepoLens.Domain.Entities;
+
 namespace RepoLens.Domain.Entities;
 
 /// <summary>
@@ -19,8 +21,11 @@ public class DocumentChunk
 
     public Guid? EvidenceId { get; set; }
 
-    // TODO: [Giả định cần chốt với nhóm] Thuộc tính Embedding (Vector pgvector) chưa khai báo ở T025,
-    // tuân thủ nghiêm ngặt SRS §36 (chỉ bổ sung khi Người 5 triển khai task Vector/RAG).
+    /// <summary>
+    /// Embedding vector for vector search (T084).
+    /// Stored as float[] and mapped to PostgreSQL pgvector vector(1536).
+    /// </summary>
+    public float[]? Embedding { get; set; }
 
     #region Navigation Properties
 

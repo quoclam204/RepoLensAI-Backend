@@ -31,6 +31,9 @@ public class RepoLensDbContext : DbContext
     {
         base.OnModelCreating(modelBuilder);
 
+        // Register PostgreSQL vector extension for pgvector (T084)
+        modelBuilder.HasPostgresExtension("vector");
+
         // Apply all entity type configurations defined in the Infrastructure assembly
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(RepoLensDbContext).Assembly);
     }

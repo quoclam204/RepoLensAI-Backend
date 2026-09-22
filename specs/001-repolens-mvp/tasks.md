@@ -293,7 +293,7 @@ Configure PostgreSQL connection infrastructure.
 Create:
 
 ```text
-RepoLensDbContext
+RepoLensDbContext `
 ```
 
 ### Acceptance Criteria

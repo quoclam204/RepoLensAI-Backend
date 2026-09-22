@@ -13,7 +13,8 @@ public static class DependencyInjection
 
         services.AddDbContext<RepoLensDbContext>(options =>
             options.UseNpgsql(connectionString, b =>
-                b.MigrationsAssembly(typeof(RepoLensDbContext).Assembly.FullName)));
+                b.UseVector()
+                .MigrationsAssembly(typeof(RepoLensDbContext).Assembly.FullName)));
 
         // Register Query and Command Services (T060 - T069)
         services.AddScoped<RepoLens.Application.Abstractions.IAnalysisService, RepoLens.Infrastructure.Services.AnalysisService>();
