@@ -24,6 +24,7 @@ public static class DependencyInjection
         services.AddScoped<RepoLens.Application.Abstractions.IFileService, RepoLens.Infrastructure.Services.FileService>();
         services.AddScoped<RepoLens.Application.Abstractions.ISymbolService, RepoLens.Infrastructure.Services.SymbolService>();
         services.AddScoped<RepoLens.Application.Abstractions.IEvidenceService, RepoLens.Infrastructure.Services.EvidenceService>();
+        services.AddScoped<RepoLens.Application.Abstractions.IAnalysisPersistenceService, RepoLens.Infrastructure.Services.AnalysisPersistenceService>();
 
         return services;
     }
