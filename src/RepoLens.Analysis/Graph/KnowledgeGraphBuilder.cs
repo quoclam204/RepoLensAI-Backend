@@ -7,6 +7,7 @@ public sealed class KnowledgeGraphBuilder
 {
     private readonly Dictionary<string, KnowledgeNode> _nodes = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<KnowledgeRelationship> _relationships = [];
+    private readonly HashSet<string> _relationshipKeys = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _lock = new();
 
     public IReadOnlyCollection<KnowledgeNode> Nodes
@@ -57,7 +58,11 @@ public sealed class KnowledgeGraphBuilder
 
         lock (_lock)
         {
-            _relationships.Add(relationship);
+            var key = $"{relationship.SourceId}->{relationship.Type}->{relationship.TargetId}";
+            if (_relationshipKeys.Add(key))
+            {
+                _relationships.Add(relationship);
+            }
         }
     }
 
@@ -101,6 +106,7 @@ public sealed class KnowledgeGraphBuilder
         {
             _nodes.Clear();
             _relationships.Clear();
+            _relationshipKeys.Clear();
         }
     }
 }

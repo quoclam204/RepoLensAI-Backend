@@ -71,6 +71,8 @@ public class ApiEndpointExtractor : CSharpSyntaxWalker
     {
         if (_currentControllerName is not null)
         {
+            var methodRoute = ExtractRouteFromAttributes(node.AttributeLists);
+
             foreach (var attributeList in node.AttributeLists)
             {
                 foreach (var attribute in attributeList.Attributes)
@@ -80,7 +82,7 @@ public class ApiEndpointExtractor : CSharpSyntaxWalker
 
                     if (matchedMethod is not null)
                     {
-                        var actionRoute = ExtractRouteFromAttributeArgument(attribute);
+                        var actionRoute = ExtractRouteFromAttributeArgument(attribute) ?? methodRoute;
                         var fullRoute = CombineRoutes(_controllerRoutePrefix, actionRoute, _currentControllerName);
 
                         var lineSpan = node.SyntaxTree.GetLineSpan(node.Span);

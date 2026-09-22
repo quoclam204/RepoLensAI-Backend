@@ -11,13 +11,19 @@ public enum TsSymbolKind
     Type,
     Enum,
     Function,
-    Constant
+    Constant,
+    Component
 }
 
 public sealed record TsDiscoveredSymbol(
     string Name,
     TsSymbolKind Kind,
     bool IsExported,
+    SourceLocation Location,
+    string Snippet);
+
+public sealed record TsDiscoveredImport(
+    string ModulePath,
     SourceLocation Location,
     string Snippet);
 
@@ -38,16 +44,31 @@ public partial class TsSymbolExtractor
     [GeneratedRegex(@"^\s*(?<export>export\s+)?const\s+(?<name>[A-Za-z0-9_$]+)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z0-9_$]+)\s*=>", RegexOptions.Multiline)]
     private static partial Regex ArrowFunctionOrConstRegex();
 
+    // Regex for: import ... from '...'
+    [GeneratedRegex(@"^\s*import\s+(?:(?:(?:\*\s+as\s+[A-Za-z0-9_$]+|\{[^}]*\}|[A-Za-z0-9_$]+)\s*,?\s*)*(?:\{[^}]*\}\s*)?)?from\s+['""](?<module>[^'""]+)['""]", RegexOptions.Multiline)]
+    private static partial Regex ImportDeclarationRegex();
+
     /// <summary>
     /// Extracts symbols from TypeScript / JavaScript source code.
     /// </summary>
     public IReadOnlyList<TsDiscoveredSymbol> Extract(string sourceCode, string filePath = "unknown.ts")
     {
+        return ExtractWithImports(sourceCode, filePath).Symbols;
+    }
+
+    /// <summary>
+    /// Extracts both declared symbols and module imports from TypeScript / JavaScript source code.
+    /// </summary>
+    public (IReadOnlyList<TsDiscoveredSymbol> Symbols, IReadOnlyList<TsDiscoveredImport> Imports) ExtractWithImports(string sourceCode, string filePath = "unknown.ts")
+    {
         ArgumentNullException.ThrowIfNull(sourceCode);
 
         var symbols = new List<TsDiscoveredSymbol>();
+        var imports = new List<TsDiscoveredImport>();
         var lines = sourceCode.Split(["\r\n", "\r", "\n"], StringSplitOptions.None);
         bool inBlockComment = false;
+        bool isJsxFile = filePath.EndsWith(".tsx", StringComparison.OrdinalIgnoreCase) ||
+                         filePath.EndsWith(".jsx", StringComparison.OrdinalIgnoreCase);
 
         for (int i = 0; i < lines.Length; i++)
         {
@@ -75,6 +96,18 @@ public partial class TsSymbolExtractor
 
             if (trimmed.StartsWith("//"))
             {
+                continue;
+            }
+
+            // Check import declaration: import ... from '...'
+            var importMatch = ImportDeclarationRegex().Match(line);
+            if (importMatch.Success)
+            {
+                var modulePath = importMatch.Groups["module"].Value;
+                imports.Add(new TsDiscoveredImport(
+                    ModulePath: modulePath,
+                    Location: new SourceLocation(filePath, lineNumber, lineNumber),
+                    Snippet: trimmed));
                 continue;
             }
 
@@ -111,10 +144,11 @@ public partial class TsSymbolExtractor
             {
                 var name = funcMatch.Groups["name"].Value;
                 var isExported = funcMatch.Groups["export"].Success;
+                var isComponent = isJsxFile && char.IsUpper(name[0]);
 
                 symbols.Add(new TsDiscoveredSymbol(
                     Name: name,
-                    Kind: TsSymbolKind.Function,
+                    Kind: isComponent ? TsSymbolKind.Component : TsSymbolKind.Function,
                     IsExported: isExported,
                     Location: new SourceLocation(filePath, lineNumber, lineNumber),
                     Snippet: line.Trim()));
@@ -128,17 +162,18 @@ public partial class TsSymbolExtractor
             {
                 var name = arrowMatch.Groups["name"].Value;
                 var isExported = arrowMatch.Groups["export"].Success;
+                var isComponent = isJsxFile && char.IsUpper(name[0]);
 
                 symbols.Add(new TsDiscoveredSymbol(
                     Name: name,
-                    Kind: TsSymbolKind.Function,
+                    Kind: isComponent ? TsSymbolKind.Component : TsSymbolKind.Function,
                     IsExported: isExported,
                     Location: new SourceLocation(filePath, lineNumber, lineNumber),
                     Snippet: line.Trim()));
             }
         }
 
-        return symbols;
+        return (symbols.AsReadOnly(), imports.AsReadOnly());
     }
 
     /// <summary>

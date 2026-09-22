@@ -7,6 +7,41 @@ public class InheritanceExtractorTests
     private readonly CSharpFileParser _parser = new();
 
     [Fact]
+    public void ExtractFromTree_WithBaseServiceAndIOrderService_DistinguishesInheritsAndImplementsWithEvidence()
+    {
+        // Arrange
+        var code = """
+            namespace Demo;
+
+            public class BaseService {}
+            public interface IOrderService {}
+
+            public class OrderService : BaseService, IOrderService {}
+            """;
+
+        var tree = _parser.ParseText(code, "OrderService.cs");
+
+        // Act
+        var inheritances = InheritanceExtractor.ExtractFromTree(tree, "OrderService.cs");
+
+        // Assert
+        var orderServiceInheritances = inheritances.Where(i => i.DerivedType == "OrderService").ToList();
+        Assert.Equal(2, orderServiceInheritances.Count);
+
+        var baseService = orderServiceInheritances.Single(i => i.BaseType == "BaseService");
+        Assert.False(baseService.IsInterfaceHeuristic);
+        Assert.Equal("OrderService.cs", baseService.Location.FilePath);
+        Assert.True(baseService.Location.StartLine > 0);
+        Assert.Contains("BaseService", baseService.Snippet);
+
+        var iOrderService = orderServiceInheritances.Single(i => i.BaseType == "IOrderService");
+        Assert.True(iOrderService.IsInterfaceHeuristic);
+        Assert.Equal("OrderService.cs", iOrderService.Location.FilePath);
+        Assert.True(iOrderService.Location.StartLine > 0);
+        Assert.Contains("IOrderService", iOrderService.Snippet);
+    }
+
+    [Fact]
     public void ExtractFromTree_WithBaseClassAndMultipleInterfaces_ExtractsAllRelationshipsCorrectly()
     {
         // Arrange

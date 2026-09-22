@@ -8,20 +8,80 @@ public class CallGraphExtractorTests
     private readonly CSharpFileParser _parser = new();
 
     [Fact]
-    public void ExtractFromTree_WithMethodInvocation_ExtractsCallWithMediumConfidence()
+    public void ExtractFromTree_WithOrderServiceFixture_ExtractsCallWithMediumConfidence()
     {
         // Arrange
         var code = """
-            namespace MyNamespace;
+            namespace Demo;
+
+            public class OrderService
+            {
+                public Order GetOrder(int id)
+                {
+                    return repository.Get(id);
+                }
+            }
+            """;
+
+        var tree = _parser.ParseText(code, "OrderService.cs");
+
+        // Act
+        var calls = CallGraphExtractor.ExtractFromTree(tree, "OrderService.cs");
+
+        // Assert
+        Assert.Single(calls);
+        var call = calls[0];
+        Assert.Equal("OrderService.GetOrder", call.CallerSymbol);
+        Assert.Equal("Get", call.CalleeName);
+        Assert.Equal("repository.Get", call.FullInvocation);
+        Assert.Equal(ConfidenceScore.Medium, call.Confidence);
+        Assert.Equal("OrderService.cs", call.Location.FilePath);
+        Assert.True(call.Location.StartLine > 0);
+        Assert.Contains("repository.Get(id)", call.Snippet);
+    }
+
+    [Fact]
+    public void ExtractFromTree_WithNestedInvocations_ExtractsAllInvocationLevels()
+    {
+        // Arrange
+        var code = """
+            namespace Demo;
+
+            public class Pipeline
+            {
+                public void Execute()
+                {
+                    config.GetBuilder().Build();
+                }
+            }
+            """;
+
+        var tree = _parser.ParseText(code, "Pipeline.cs");
+
+        // Act
+        var calls = CallGraphExtractor.ExtractFromTree(tree, "Pipeline.cs");
+
+        // Assert
+        Assert.Equal(2, calls.Count);
+        Assert.Contains(calls, c => c.CallerSymbol == "Pipeline.Execute" && c.CalleeName == "Build");
+        Assert.Contains(calls, c => c.CallerSymbol == "Pipeline.Execute" && c.CalleeName == "GetBuilder");
+    }
+
+    [Fact]
+    public void ExtractFromTree_WithConstructorInvocation_CapturesConstructorCallerSymbol()
+    {
+        // Arrange
+        var code = """
+            namespace Demo;
 
             public class Service
             {
-                public void DoWork()
+                public Service()
                 {
-                    LogMessage("started");
+                    Initialize();
                 }
 
-                private void LogMessage(string msg) {}
+                private void Initialize() {}
             }
             """;
 
@@ -32,10 +92,9 @@ public class CallGraphExtractorTests
 
         // Assert
         Assert.Single(calls);
-        var call = calls[0];
-        Assert.Equal("Service.DoWork", call.CallerSymbol);
-        Assert.Equal("LogMessage", call.CalleeName);
-        Assert.Equal(ConfidenceScore.Medium, call.Confidence);
+        Assert.Equal("Service..ctor", calls[0].CallerSymbol);
+        Assert.Equal("Initialize", calls[0].CalleeName);
+        Assert.Equal(ConfidenceScore.Medium, calls[0].Confidence);
     }
 
     [Fact]

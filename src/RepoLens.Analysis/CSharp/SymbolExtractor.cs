@@ -12,9 +12,11 @@ public enum CSharpSymbolKind
     Interface,
     Struct,
     Record,
+    Enum,
     Method,
     Property,
-    Constructor
+    Constructor,
+    Field
 }
 
 public sealed record CSharpDiscoveredSymbol(
@@ -107,6 +109,39 @@ public class SymbolExtractor : CSharpSyntaxWalker
         _containerStack.Pop();
     }
 
+    public override void VisitEnumDeclaration(EnumDeclarationSyntax node)
+    {
+        AddTypeSymbol(node.Identifier.Text, CSharpSymbolKind.Enum, node, node.Modifiers);
+        base.VisitEnumDeclaration(node);
+    }
+
+    public override void VisitFieldDeclaration(FieldDeclarationSyntax node)
+    {
+        var lineSpan = node.SyntaxTree.GetLineSpan(node.Span);
+        var location = new SourceLocation(
+            _filePath,
+            lineSpan.StartLinePosition.Line + 1,
+            lineSpan.EndLinePosition.Line + 1);
+
+        var container = _containerStack.Count > 0 ? _containerStack.Peek() : null;
+        var modifiers = node.Modifiers.Select(m => m.Text).ToList();
+        var typeName = node.Declaration.Type.ToString();
+
+        foreach (var variable in node.Declaration.Variables)
+        {
+            _symbols.Add(new CSharpDiscoveredSymbol(
+                Name: variable.Identifier.Text,
+                Kind: CSharpSymbolKind.Field,
+                Namespace: _currentNamespace,
+                ContainerType: container,
+                Location: location,
+                Modifiers: modifiers,
+                ReturnType: typeName));
+        }
+
+        base.VisitFieldDeclaration(node);
+    }
+
     public override void VisitMethodDeclaration(MethodDeclarationSyntax node)
     {
         var lineSpan = node.SyntaxTree.GetLineSpan(node.Span);
@@ -142,7 +177,7 @@ public class SymbolExtractor : CSharpSyntaxWalker
         var modifiers = node.Modifiers.Select(m => m.Text).ToList();
 
         _symbols.Add(new CSharpDiscoveredSymbol(
-            Name: node.Identifier.Text,
+            Name: container is not null ? $"{container}..ctor" : ".ctor",
             Kind: CSharpSymbolKind.Constructor,
             Namespace: _currentNamespace,
             ContainerType: container,

@@ -24,13 +24,21 @@ public sealed record DatabaseEntityInfo(
     SourceLocation Location,
     string Snippet);
 
+public sealed record DatabaseRelationshipInfo(
+    string PrincipalEntity,
+    string DependentEntity,
+    string Multiplicity, // "OneToMany", "OneToOne", "ManyToOne", "ManyToMany"
+    string? ForeignKey,
+    SourceLocation Location,
+    string Snippet);
+
 /// <summary>
-/// SyntaxWalker to detect EF Core DbContext declarations, DbSet&lt;T&gt; properties, and database entities.
+/// SyntaxWalker to detect EF Core DbContext declarations, DbSet&lt;T&gt; properties, database entities,
+/// and fluent relationship configurations.
 /// </summary>
 /// <remarks>
-/// LIMITATION: This extractor currently detects entities via DbSet&lt;T&gt; properties on DbContext and Data Annotations
-/// ([Table], [Key]). Fluent API configurations (e.g., OnModelCreating, modelBuilder.Entity&lt;T&gt;(),
-/// IEntityTypeConfiguration&lt;T&gt;) are not currently analyzed in this static syntax pass.
+/// Detects entities via DbSet&lt;T&gt; properties on DbContext, Data Annotations ([Table], [Key]), and
+/// fluent API relationship configurations (HasOne, HasMany, WithOne, WithMany, HasForeignKey) in OnModelCreating.
 /// </remarks>
 public class DatabaseEntityExtractor : CSharpSyntaxWalker
 {
@@ -38,6 +46,7 @@ public class DatabaseEntityExtractor : CSharpSyntaxWalker
     private readonly List<DatabaseContextInfo> _contexts = [];
     private readonly List<DbSetInfo> _dbSets = [];
     private readonly List<DatabaseEntityInfo> _entities = [];
+    private readonly List<DatabaseRelationshipInfo> _relationships = [];
 
     private string? _currentClassName;
     private bool _isCurrentClassDbContext;
@@ -52,6 +61,7 @@ public class DatabaseEntityExtractor : CSharpSyntaxWalker
     public IReadOnlyList<DatabaseContextInfo> Contexts => _contexts.AsReadOnly();
     public IReadOnlyList<DbSetInfo> DbSets => _dbSets.AsReadOnly();
     public IReadOnlyList<DatabaseEntityInfo> Entities => _entities.AsReadOnly();
+    public IReadOnlyList<DatabaseRelationshipInfo> Relationships => _relationships.AsReadOnly();
 
     public static (IReadOnlyList<DatabaseContextInfo> Contexts, IReadOnlyList<DbSetInfo> DbSets, IReadOnlyList<DatabaseEntityInfo> Entities) ExtractFromTree(
         SyntaxTree tree,
@@ -63,6 +73,18 @@ public class DatabaseEntityExtractor : CSharpSyntaxWalker
         var extractor = new DatabaseEntityExtractor(path);
         extractor.Visit(tree.GetRoot());
         return (extractor.Contexts, extractor.DbSets, extractor.Entities);
+    }
+
+    public static (IReadOnlyList<DatabaseContextInfo> Contexts, IReadOnlyList<DbSetInfo> DbSets, IReadOnlyList<DatabaseEntityInfo> Entities, IReadOnlyList<DatabaseRelationshipInfo> Relationships) ExtractAllFromTree(
+        SyntaxTree tree,
+        string filePath = "")
+    {
+        ArgumentNullException.ThrowIfNull(tree);
+
+        var path = string.IsNullOrWhiteSpace(filePath) ? tree.FilePath : filePath;
+        var extractor = new DatabaseEntityExtractor(path);
+        extractor.Visit(tree.GetRoot());
+        return (extractor.Contexts, extractor.DbSets, extractor.Entities, extractor.Relationships);
     }
 
     public override void VisitClassDeclaration(ClassDeclarationSyntax node)
@@ -131,8 +153,10 @@ public class DatabaseEntityExtractor : CSharpSyntaxWalker
             }
         }
 
-        // Check if property is marked with [Key]
-        if (HasKeyAttribute(node.AttributeLists))
+        // Check if property is marked with [Key] or named Id / <Class>Id by EF convention
+        if (HasKeyAttribute(node.AttributeLists) ||
+            node.Identifier.Text.Equals("Id", StringComparison.OrdinalIgnoreCase) ||
+            (_currentClassName is not null && node.Identifier.Text.Equals($"{_currentClassName}Id", StringComparison.OrdinalIgnoreCase)))
         {
             _currentClassKeys.Add(node.Identifier.Text);
         }
@@ -193,5 +217,98 @@ public class DatabaseEntityExtractor : CSharpSyntaxWalker
         }
 
         return false;
+    }
+
+    public override void VisitInvocationExpression(InvocationExpressionSyntax node)
+    {
+        var text = node.ToString();
+        if ((text.Contains("HasOne", StringComparison.Ordinal) || text.Contains("HasMany", StringComparison.Ordinal)) &&
+            (text.Contains("WithOne", StringComparison.Ordinal) || text.Contains("WithMany", StringComparison.Ordinal)))
+        {
+            if (node.Parent is not MemberAccessExpressionSyntax)
+            {
+                var rel = ParseFluentRelationship(node, _filePath);
+                if (rel is not null)
+                {
+                    _relationships.Add(rel);
+                }
+            }
+        }
+
+        base.VisitInvocationExpression(node);
+    }
+
+    private static DatabaseRelationshipInfo? ParseFluentRelationship(InvocationExpressionSyntax node, string filePath)
+    {
+        var fullText = node.ToString();
+        var lineSpan = node.SyntaxTree.GetLineSpan(node.Span);
+        var location = new SourceLocation(
+            filePath,
+            lineSpan.StartLinePosition.Line + 1,
+            lineSpan.EndLinePosition.Line + 1);
+
+        // Find Entity<T> in the chain
+        string? principal = null;
+        string? dependent = null;
+        string multiplicity = "OneToMany";
+        string? fk = null;
+
+        var current = node;
+        while (current is not null)
+        {
+            if (current.Expression is MemberAccessExpressionSyntax ma)
+            {
+                var methodName = ma.Name.Identifier.Text;
+                if (methodName.Equals("Entity", StringComparison.OrdinalIgnoreCase) &&
+                    ma.Name is GenericNameSyntax gn &&
+                    gn.TypeArgumentList.Arguments.Count > 0)
+                {
+                    principal = gn.TypeArgumentList.Arguments[0].ToString();
+                }
+                else if (methodName.Equals("HasForeignKey", StringComparison.OrdinalIgnoreCase))
+                {
+                    fk = current.ArgumentList.Arguments.FirstOrDefault()?.ToString()
+                        .Split("=>").Last().Trim().Split('.').Last();
+                }
+                else if (methodName.Equals("WithMany", StringComparison.OrdinalIgnoreCase))
+                {
+                    multiplicity = fullText.Contains("HasMany") ? "ManyToMany" : "OneToMany";
+                }
+                else if (methodName.Equals("WithOne", StringComparison.OrdinalIgnoreCase))
+                {
+                    multiplicity = fullText.Contains("HasMany") ? "ManyToOne" : "OneToOne";
+                }
+                else if (methodName.Equals("HasOne", StringComparison.OrdinalIgnoreCase) ||
+                         methodName.Equals("HasMany", StringComparison.OrdinalIgnoreCase))
+                {
+                    var arg = current.ArgumentList.Arguments.FirstOrDefault()?.ToString();
+                    if (arg is not null)
+                    {
+                        var nav = arg.Split("=>").Last().Trim().Split('.').Last();
+                        dependent ??= nav;
+                    }
+                }
+
+                if (ma.Expression is InvocationExpressionSyntax nextInv)
+                {
+                    current = nextInv;
+                    continue;
+                }
+            }
+            break;
+        }
+
+        if (principal is not null && dependent is not null)
+        {
+            return new DatabaseRelationshipInfo(
+                PrincipalEntity: principal,
+                DependentEntity: dependent,
+                Multiplicity: multiplicity,
+                ForeignKey: fk,
+                Location: location,
+                Snippet: fullText.Length > 200 ? string.Concat(fullText.AsSpan(0, 197), "...") : fullText);
+        }
+
+        return null;
     }
 }

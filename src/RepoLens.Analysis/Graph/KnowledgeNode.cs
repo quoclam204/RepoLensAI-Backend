@@ -12,11 +12,13 @@ public enum KnowledgeNodeType
     Interface,
     Record,
     Struct,
+    Enum,
     Method,
     Property,
     Endpoint,
     DatabaseEntity,
-    Service
+    Service,
+    Component
 }
 
 public sealed class KnowledgeNode
