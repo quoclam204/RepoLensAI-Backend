@@ -52,15 +52,17 @@ public class DependencyRulesTests
     }
 
     [Fact]
-    public void Infrastructure_MustReferenceOnlyApplicationAndDomain()
+    public void Infrastructure_MustReferenceApplicationDomainAndOptionallyAnalysis()
     {
         var references = GetProjectReferences("RepoLens.Infrastructure");
 
-        Assert.Equal(2, references.Count);
+        // Infrastructure must reference Application and Domain, and is permitted to reference Analysis as an adapter
         Assert.Contains("RepoLens.Application", references);
         Assert.Contains("RepoLens.Domain", references);
         Assert.DoesNotContain("RepoLens.Api", references);
-        Assert.DoesNotContain("RepoLens.Analysis", references);
+
+        var allowed = new HashSet<string> { "RepoLens.Application", "RepoLens.Domain", "RepoLens.Analysis" };
+        Assert.All(references, r => Assert.Contains(r, allowed));
     }
 
     [Fact]
