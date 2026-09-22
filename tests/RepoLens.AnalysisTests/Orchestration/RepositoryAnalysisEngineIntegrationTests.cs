@@ -118,6 +118,7 @@ public class RepositoryAnalysisEngineIntegrationTests : IDisposable
         foreach (var rel in relationships)
         {
             Assert.NotNull(rel.Evidence);
+            Assert.NotNull(rel.Evidence.Confidence);
             Assert.True(rel.Evidence.Confidence.Value.Value is >= 0.0f and <= 1.0f);
             Assert.False(string.IsNullOrWhiteSpace(rel.Evidence.Snippet));
         }

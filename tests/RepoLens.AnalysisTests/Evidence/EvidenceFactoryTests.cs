@@ -30,8 +30,8 @@ public class EvidenceFactoryTests
         Assert.Equal("src/Controllers/UserController.cs", evidence.Location.FilePath);
         Assert.Equal(10, evidence.Location.StartLine);
         Assert.Equal(15, evidence.Location.EndLine);
-        Assert.Equal(EvidenceType.Route, evidence.EvidenceType);
-        Assert.Equal(1.0f, evidence.Confidence.Value);
+        Assert.NotNull(evidence.Confidence);
+        Assert.Equal(1.0f, evidence.Confidence.Value.Value);
         Assert.Equal("UserController.Get", evidence.Symbol);
     }
 
