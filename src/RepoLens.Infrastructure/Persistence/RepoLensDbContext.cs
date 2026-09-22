@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using RepoLens.Domain.Entities;
+using AnalysisEntity = RepoLens.Domain.Entities.Analysis;
 
 namespace RepoLens.Infrastructure.Persistence;
 
@@ -15,7 +16,7 @@ public class RepoLensDbContext : DbContext
     }
 
     public DbSet<Repository> Repositories => Set<Repository>();
-    public DbSet<Analysis> Analyses => Set<Analysis>();
+    public DbSet<AnalysisEntity> Analyses => Set<AnalysisEntity>();
     public DbSet<Project> Projects => Set<Project>();
     public DbSet<SourceFile> SourceFiles => Set<SourceFile>();
     public DbSet<CodeSymbol> CodeSymbols => Set<CodeSymbol>();

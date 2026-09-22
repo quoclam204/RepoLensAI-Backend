@@ -7,6 +7,7 @@ using RepoLens.Application.DTOs.Overview;
 using RepoLens.Domain.Entities;
 using RepoLens.Domain.Enums;
 using RepoLens.Infrastructure.Persistence;
+using AnalysisEntity = RepoLens.Domain.Entities.Analysis;
 
 namespace RepoLens.Infrastructure.Services;
 
@@ -45,7 +46,7 @@ public class AnalysisService : IAnalysisService
             _context.Repositories.Add(repository);
         }
 
-        var analysis = new Analysis
+        var analysis = new AnalysisEntity
         {
             Id = Guid.NewGuid(),
             RepositoryId = repository.Id,
@@ -89,7 +90,7 @@ public class AnalysisService : IAnalysisService
 
         _context.Repositories.Add(repository);
 
-        var analysis = new Analysis
+        var analysis = new AnalysisEntity
         {
             Id = Guid.NewGuid(),
             RepositoryId = repository.Id,
