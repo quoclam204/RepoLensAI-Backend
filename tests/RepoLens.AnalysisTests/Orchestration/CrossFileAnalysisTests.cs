@@ -105,7 +105,7 @@ public class CrossFileAnalysisTests
             Assert.False(string.IsNullOrWhiteSpace(rel.Evidence.Snippet));
 
             // Confidence score must be valid
-            Assert.True(rel.Evidence.Confidence.Value is >= 0.0f and <= 1.0f);
+            Assert.True(rel.Evidence.Confidence.Value.Value is >= 0.0f and <= 1.0f);
         }
     }
 
