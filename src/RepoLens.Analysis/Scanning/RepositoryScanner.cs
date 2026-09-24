@@ -53,9 +53,14 @@ public class RepositoryScanner
         ".json", ".yaml", ".yml", ".xml", ".config"
     };
 
-    public ScannedRepository Scan(string repositoryRootPath)
+    public ScannedRepository Scan(
+        string repositoryRootPath,
+        AnalysisLimits? limits = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(repositoryRootPath);
+
+        var effectiveLimits = limits ?? AnalysisLimits.Default;
 
         if (!Directory.Exists(repositoryRootPath))
         {
@@ -74,6 +79,7 @@ public class RepositoryScanner
         var configFiles = new List<ScannedFile>();
         var solutionFiles = new List<string>();
         var scanErrors = new List<string>();
+        long currentTotalBytes = 0;
 
         try
         {
@@ -84,7 +90,14 @@ public class RepositoryScanner
                 sourceFiles: sourceFiles,
                 configFiles: configFiles,
                 solutionFiles: solutionFiles,
-                scanErrors: scanErrors);
+                scanErrors: scanErrors,
+                limits: effectiveLimits,
+                refCurrentTotalBytes: ref currentTotalBytes,
+                cancellationToken: cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            scanErrors.Add("Repository scan was cancelled.");
         }
         catch (Exception ex)
         {
@@ -113,8 +126,13 @@ public class RepositoryScanner
         List<ScannedFile> sourceFiles,
         List<ScannedFile> configFiles,
         List<string> solutionFiles,
-        List<string> scanErrors)
+        List<string> scanErrors,
+        AnalysisLimits limits,
+        ref long refCurrentTotalBytes,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         DirectoryInfo dirInfo;
         try
         {
@@ -144,6 +162,27 @@ public class RepositoryScanner
                 var relativePath = Path.GetRelativePath(rootFullPath, fileFullPath).Replace('\\', '/');
                 var ext = file.Extension;
                 var fileName = file.Name;
+
+                // Check file limits
+                if (sourceFiles.Count >= limits.MaxFiles)
+                {
+                    scanErrors.Add($"Maximum file count limit reached ({limits.MaxFiles}). Traversal stopped.");
+                    return;
+                }
+
+                if (file.Length > limits.MaxFileSizeBytes)
+                {
+                    scanErrors.Add($"Skipping excessively large file '{relativePath}' ({file.Length} bytes exceeds limit of {limits.MaxFileSizeBytes} bytes)");
+                    continue;
+                }
+
+                if (refCurrentTotalBytes + file.Length > limits.MaxTotalRepositorySizeBytes)
+                {
+                    scanErrors.Add($"Maximum repository total size limit reached ({limits.MaxTotalRepositorySizeBytes} bytes). Traversal stopped.");
+                    return;
+                }
+
+                refCurrentTotalBytes += file.Length;
 
                 // Check solutions
                 if (ext.Equals(".sln", StringComparison.OrdinalIgnoreCase))
@@ -237,6 +276,8 @@ public class RepositoryScanner
         {
             foreach (var subDir in dirInfo.EnumerateDirectories())
             {
+                cancellationToken.ThrowIfCancellationRequested();
+
                 if (IgnoredDirectories.Contains(subDir.Name))
                 {
                     continue;
@@ -255,7 +296,10 @@ public class RepositoryScanner
                     sourceFiles: sourceFiles,
                     configFiles: configFiles,
                     solutionFiles: solutionFiles,
-                    scanErrors: scanErrors);
+                    scanErrors: scanErrors,
+                    limits: limits,
+                    refCurrentTotalBytes: ref refCurrentTotalBytes,
+                    cancellationToken: cancellationToken);
             }
         }
         catch (Exception ex)

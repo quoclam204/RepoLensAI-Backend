@@ -78,11 +78,12 @@ public static class EvidenceFactory
         }
 
         var trimmed = rawSnippet.Trim();
-        if (trimmed.Length <= maxLength)
+        var masked = Security.SecretMasker.MaskSecrets(trimmed);
+        if (masked.Length <= maxLength)
         {
-            return trimmed;
+            return masked;
         }
 
-        return string.Concat(trimmed.AsSpan(0, maxLength - 3), "...");
+        return string.Concat(masked.AsSpan(0, maxLength - 3), "...");
     }
 }

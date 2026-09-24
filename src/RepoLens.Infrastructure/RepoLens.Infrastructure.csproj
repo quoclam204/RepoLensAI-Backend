@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -7,8 +7,14 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.0.2" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="9.0.4" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\RepoLens.Application\RepoLens.Application.csproj" />
     <ProjectReference Include="..\RepoLens.Domain\RepoLens.Domain.csproj" />
+    <ProjectReference Include="..\RepoLens.Analysis\RepoLens.Analysis.csproj" />
   </ItemGroup>
 
 </Project>

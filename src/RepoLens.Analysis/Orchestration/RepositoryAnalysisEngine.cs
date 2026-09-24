@@ -35,15 +35,19 @@ public class RepositoryAnalysisEngine
 
     public RepositoryAnalysisResult AnalyzeRepository(
         string repositoryRootPath,
-        Guid analysisJobId = default)
+        Guid analysisJobId = default,
+        AnalysisLimits? limits = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(repositoryRootPath);
+        cancellationToken.ThrowIfCancellationRequested();
 
+        var effectiveLimits = limits ?? AnalysisLimits.Default;
         var effectiveJobId = analysisJobId == Guid.Empty ? Guid.NewGuid() : analysisJobId;
         var allErrors = new List<string>();
 
         // 1. Scan filesystem safely
-        var scanResult = _scanner.Scan(repositoryRootPath);
+        var scanResult = _scanner.Scan(repositoryRootPath, effectiveLimits, cancellationToken);
         allErrors.AddRange(scanResult.ScanErrors);
 
         // 2. Read .csproj project files
@@ -218,5 +222,18 @@ public class RepositoryAnalysisEngine
             NodeCountByType: nodeCountByType,
             RelationshipCountByType: relCountByType,
             AllErrors: allErrors.AsReadOnly());
+    }
+
+    /// <summary>
+    /// Asynchronously analyzes a repository without executing target code, supporting cancellation.
+    /// </summary>
+    public async Task<RepositoryAnalysisResult> AnalyzeRepositoryAsync(
+        string repositoryRootPath,
+        Guid analysisJobId = default,
+        AnalysisLimits? limits = null,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return await Task.Run(() => AnalyzeRepository(repositoryRootPath, analysisJobId, limits, cancellationToken), cancellationToken);
     }
 }
