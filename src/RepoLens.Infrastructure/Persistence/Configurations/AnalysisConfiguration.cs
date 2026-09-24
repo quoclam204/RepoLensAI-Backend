@@ -1,12 +1,13 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using RepoLens.Domain.Entities;
+using AnalysisEntity = RepoLens.Domain.Entities.Analysis;
 
 namespace RepoLens.Infrastructure.Persistence.Configurations;
 
-public class AnalysisConfiguration : IEntityTypeConfiguration<Analysis>
+public class AnalysisConfiguration : IEntityTypeConfiguration<AnalysisEntity>
 {
-    public void Configure(EntityTypeBuilder<Analysis> builder)
+    public void Configure(EntityTypeBuilder<AnalysisEntity> builder)
     {
         builder.ToTable("analyses");
 

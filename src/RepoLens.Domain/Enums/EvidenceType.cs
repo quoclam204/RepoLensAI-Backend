@@ -10,5 +10,11 @@ public enum EvidenceType
     ApiEndpoint = 3,
     DatabaseModel = 4,
     CodeSymbol = 5,
-    General = 6
+    General = 6,
+    Declaration = 7,
+    Invocation = 8,
+    Configuration = 9,
+    Dependency = 10,
+    Route = 11,
+    Database = 12
 }

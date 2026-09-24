@@ -15,6 +15,7 @@
   <ItemGroup>
     <ProjectReference Include="..\RepoLens.Application\RepoLens.Application.csproj" />
     <ProjectReference Include="..\RepoLens.Domain\RepoLens.Domain.csproj" />
+    <ProjectReference Include="..\RepoLens.Analysis\RepoLens.Analysis.csproj" />
   </ItemGroup>
 
 </Project>

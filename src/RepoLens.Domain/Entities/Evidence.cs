@@ -23,6 +23,45 @@ public class Evidence
 
     public string Description { get; set; } = string.Empty;
 
+    // Compatibility properties for static analysis engine and RAG
+    public Guid AnalysisJobId
+    {
+        get => AnalysisId;
+        set => AnalysisId = value;
+    }
+
+    public string Snippet
+    {
+        get => Description;
+        set => Description = value;
+    }
+
+    public ValueObjects.SourceLocation Location => new(FilePath, StartLine, EndLine);
+
+    public ValueObjects.ConfidenceScore? Confidence { get; set; }
+
+    public static Evidence Create(
+        Guid analysisJobId,
+        ValueObjects.SourceLocation location,
+        string snippet,
+        EvidenceType evidenceType,
+        ValueObjects.ConfidenceScore? confidence = null,
+        string? symbol = null)
+    {
+        return new Evidence
+        {
+            Id = Guid.NewGuid(),
+            AnalysisId = analysisJobId,
+            FilePath = location.FilePath,
+            StartLine = location.StartLine,
+            EndLine = location.EndLine,
+            Description = snippet,
+            EvidenceType = evidenceType,
+            Confidence = confidence,
+            Symbol = symbol
+        };
+    }
+
     #region Navigation Properties
 
     public Analysis Analysis { get; set; } = null!;
