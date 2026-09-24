@@ -240,18 +240,78 @@ public static class AnalysisResultMapper
             Severity: IssueSeverity.Warning,
             Message: err)).ToList();
 
-        // 10. Generate DocumentChunks for RAG
+        // 10. Generate DocumentChunks for RAG (T083 / FR-009)
         var contents = fileContents ?? new Dictionary<string, string>();
-        var generatedChunks = DocumentChunkGenerator.GenerateChunks(graph.Nodes, contents);
-        var chunkModels = generatedChunks.Select(c => new DocumentChunkPersistenceModel(
-            Id: Guid.NewGuid(),
-            SourceFileId: filePathToId.TryGetValue(c.FilePath, out var fid) ? fid : null,
-            FilePath: c.FilePath,
-            Content: c.Content,
-            TokenCount: c.TokenCount,
-            ChunkIndex: c.ChunkIndex,
-            EvidenceId: c.EvidenceKey != null && evidenceKeyToId.TryGetValue(c.EvidenceKey, out var eid) ? eid : null,
-            EvidenceKey: c.EvidenceKey)).ToList();
+        var existingDomainEvidences = graph.Relationships
+            .Where(r => r.Evidence != null)
+            .Select(r => r.Evidence!)
+            .ToList();
+
+        var generatedChunks = DocumentChunkGenerator.GenerateChunks(graph.Nodes, contents, existingDomainEvidences);
+        var chunkModels = new List<DocumentChunkPersistenceModel>(generatedChunks.Count);
+
+        foreach (var c in generatedChunks)
+        {
+            var chunkId = CreateDeterministicGuid($"chunk:{analysisId}:{c.FilePath}:{c.ChunkIndex}");
+            var sourceFileId = filePathToId.TryGetValue(c.FilePath, out var fid) ? (Guid?)fid : null;
+
+            // Resolve primary EvidenceId from existing evidence models
+            Guid? primaryEvidenceId = null;
+            var evidenceKey = c.EvidenceKey ?? $"ev:{c.FilePath}:{c.StartLine}-{c.EndLine}";
+
+            if (evidenceKeyToId.TryGetValue(evidenceKey, out var existingEid))
+            {
+                primaryEvidenceId = existingEid;
+            }
+
+            // Collect all overlapping evidence IDs from analyzer evidences
+            var allEvidenceIds = new List<Guid>();
+            if (primaryEvidenceId.HasValue)
+            {
+                allEvidenceIds.Add(primaryEvidenceId.Value);
+            }
+
+            if (c.EvidenceIds != null)
+            {
+                foreach (var id in c.EvidenceIds)
+                {
+                    if (id != Guid.Empty && !allEvidenceIds.Contains(id))
+                    {
+                        allEvidenceIds.Add(id);
+                    }
+                }
+            }
+
+            if (c.EvidenceKeys != null)
+            {
+                foreach (var k in c.EvidenceKeys)
+                {
+                    if (evidenceKeyToId.TryGetValue(k, out var kId) && !allEvidenceIds.Contains(kId))
+                    {
+                        allEvidenceIds.Add(kId);
+                    }
+                }
+            }
+
+            if (!primaryEvidenceId.HasValue && allEvidenceIds.Count > 0)
+            {
+                primaryEvidenceId = allEvidenceIds[0];
+            }
+
+            chunkModels.Add(new DocumentChunkPersistenceModel(
+                Id: chunkId,
+                SourceFileId: sourceFileId,
+                FilePath: c.FilePath,
+                Content: c.Content,
+                TokenCount: c.TokenCount,
+                ChunkIndex: c.ChunkIndex,
+                EvidenceId: primaryEvidenceId,
+                EvidenceKey: evidenceKey,
+                StartLine: c.StartLine,
+                EndLine: c.EndLine,
+                ConfidenceScore: c.ConfidenceScore,
+                EvidenceIds: allEvidenceIds.AsReadOnly()));
+        }
 
         return new AnalysisResultModel
         {
@@ -322,5 +382,13 @@ public static class AnalysisResultMapper
             KnowledgeRelationshipType.Writes => DependencyType.Writes,
             _ => DependencyType.DependsOn
         };
+    }
+
+    private static Guid CreateDeterministicGuid(string input)
+    {
+        var hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(input));
+        Span<byte> guidBytes = stackalloc byte[16];
+        hash.AsSpan(0, 16).CopyTo(guidBytes);
+        return new Guid(guidBytes);
     }
 }

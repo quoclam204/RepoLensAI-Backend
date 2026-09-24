@@ -17,4 +17,15 @@ public interface IEvidenceRetriever
         string? targetSymbolOrPath = null,
         float minimumConfidence = 0.5f,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Retrieves verified document chunks for an analysis run, optionally filtering by symbol/file path or content keyword.
+    /// Preserves full provenance: file path, line spans, evidence id, and confidence score.
+    /// </summary>
+    Task<IReadOnlyList<RetrievedChunkItem>> RetrieveDocumentChunksAsync(
+        Guid analysisId,
+        string? targetSymbolOrPath = null,
+        string? keyword = null,
+        float minimumConfidence = 0.5f,
+        CancellationToken cancellationToken = default);
 }

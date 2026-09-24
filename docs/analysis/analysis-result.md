@@ -29,4 +29,14 @@ Hợp đồng đầu ra của pipeline phân tích được chuẩn hóa qua 2 t
 - `DatabaseEntities`: Danh sách `DatabaseEntityPersistenceModel` (Name, EntityType, SourceSymbolKey).
 - `DatabaseRelationships`: Danh sách `DatabaseRelationshipPersistenceModel` (SourceEntityName, TargetEntityName, RelationshipType, EvidenceKey).
 - `Issues`: Danh sách `AnalysisIssuePersistenceModel` (IssueType, Severity, Message).
-- `DocumentChunks`: Danh sách `DocumentChunkPersistenceModel` (FilePath, Content, TokenCount, ChunkIndex, EvidenceKey).
+- `DocumentChunks`: Danh sách `DocumentChunkPersistenceModel` (Id, FilePath, SourceFileId, Content, TokenCount, ChunkIndex, EvidenceKey, EvidenceId, StartLine, EndLine, ConfidenceScore, EvidenceIds).
+
+## 4. Document Chunking & Evidence Traceability (T083 / FR-009)
+- **Mục tiêu**: Phân đoạn mã nguồn và tài liệu phục vụ vector embedding và RAG retrieval nhưng **tuyệt đối bảo toàn nguồn gốc chứng cứ (Evidence metadata)**.
+- **Ranh giới phân đoạn**:
+  - Mã nguồn: Ưu tiên ranh giới Symbol (Class, Interface, Method, Endpoint). Nếu kích thước vượt quá `MaxChunkChars` (2000 ký tự), chia nhỏ thành các sub-chunk dọc theo ranh giới dòng, không cắt ngang dòng hay cắt cụt bằng `...`.
+  - Tài liệu (Markdown): Phân đoạn theo tiêu đề mục `# `, `## `, `### ` bảo toàn tên heading và dòng bắt đầu/kết thúc.
+  - Tệp cấu hình / phi symbol: Phân đoạn theo khối dòng liên tục (windowed lines).
+- **Bảo toàn Evidence**: Mọi chunk đều mang `EvidenceKey`, `EvidenceId`, `StartLine`, `EndLine`, `ConfidenceScore`, và danh sách `EvidenceIds` chồng lấn (overlapping).
+- **An toàn bảo mật**: Toàn bộ nội dung chunk đều được làm sạch qua `SecretMasker` trước khi persist.
+- **Tính tiền định (Determinism)**: ID của DocumentChunk được sinh tiền định từ SHA256 `$"chunk:{analysisId}:{filePath}:{chunkIndex}"`, đảm bảo cùng đầu vào cho cùng kết quả.

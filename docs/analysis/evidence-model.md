@@ -24,3 +24,13 @@ Mọi sự thật kiến trúc, quan hệ phụ thuộc (Call, Inherits, Impleme
 4. Nếu không tìm thấy hoặc confidence không đạt ngưỡng:
    - Trả về `HasSufficientEvidence = false` với `GroundingStatus = "Insufficient evidence"`.
    - LLM tuyệt đối **không được tự bịa ra vị trí dòng hoặc tên file** không có trong evidence.
+
+## 4. Document Chunk Grounded Retrieval
+`IEvidenceRetriever.RetrieveDocumentChunksAsync` cung cấp khả năng truy xuất trực tiếp các `DocumentChunk`:
+- **Truy xuất theo Symbol hoặc Đường dẫn**: Lọc chính xác các chunk thuộc về symbol/file cụ thể.
+- **Cách ly Analysis (NFR-004)**: Bắt buộc lọc theo `AnalysisId`, tuyệt đối không pha trộn giữa các repository/lần phân tích khác nhau.
+- **Truy nguyên toàn diện (Provenance)**: Mỗi `RetrievedChunkItem` trả lời rõ ràng:
+  1. *Thông tin đến từ đâu?* -> `FilePath` (thông qua `SourceFile` hoặc `Evidence`).
+  2. *Dòng nào?* -> `StartLine` đến `EndLine`.
+  3. *Chứng cứ nào?* -> `EvidenceId` liên kết với bảng `evidences`.
+  4. *Độ tin cậy bao nhiêu?* -> `ConfidenceScore` kế thừa từ Evidence model.

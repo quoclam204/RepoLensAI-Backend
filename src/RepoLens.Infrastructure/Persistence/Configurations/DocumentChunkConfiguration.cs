@@ -26,6 +26,12 @@ public class DocumentChunkConfiguration : IEntityTypeConfiguration<DocumentChunk
         builder.Property(c => c.ChunkIndex)
             .IsRequired();
 
+        // In-memory / transient RAG metadata properties (T083)
+        builder.Ignore(c => c.StartLine);
+        builder.Ignore(c => c.EndLine);
+        builder.Ignore(c => c.ConfidenceScore);
+        builder.Ignore(c => c.EvidenceIds);
+
         builder.HasOne(c => c.Analysis)
             .WithMany(a => a.DocumentChunks)
             .HasForeignKey(c => c.AnalysisId)

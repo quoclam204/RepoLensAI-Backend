@@ -202,7 +202,8 @@ public class AnalysisPersistenceService : IAnalysisPersistenceService
                     StartLine = eviDto.StartLine,
                     EndLine = eviDto.EndLine,
                     EvidenceType = eviDto.EvidenceType,
-                    Description = eviDto.Description
+                    Description = eviDto.Description,
+                    Confidence = eviDto.ConfidenceScore.HasValue ? new RepoLens.Domain.ValueObjects.ConfidenceScore(eviDto.ConfidenceScore.Value) : null
                 });
             }
 
@@ -453,7 +454,7 @@ public class AnalysisPersistenceService : IAnalysisPersistenceService
                     chunkEviId = cekId;
                 }
 
-                chunks.Add(new DocumentChunk
+                var chunk = new DocumentChunk
                 {
                     Id = chunkDto.Id ?? Guid.NewGuid(),
                     AnalysisId = result.AnalysisId,
@@ -462,7 +463,19 @@ public class AnalysisPersistenceService : IAnalysisPersistenceService
                     TokenCount = chunkDto.TokenCount,
                     ChunkIndex = chunkDto.ChunkIndex,
                     EvidenceId = chunkEviId
-                });
+                };
+                chunk.SetLineRange(chunkDto.StartLine, chunkDto.EndLine);
+                chunk.SetConfidence(chunkDto.ConfidenceScore);
+                if (chunkDto.EvidenceIds != null && chunkDto.EvidenceIds.Count > 0)
+                {
+                    chunk.SetEvidenceIds(chunkDto.EvidenceIds);
+                }
+                else if (chunkEviId.HasValue)
+                {
+                    chunk.SetEvidenceIds([chunkEviId.Value]);
+                }
+
+                chunks.Add(chunk);
             }
 
             if (chunks.Count > 0)

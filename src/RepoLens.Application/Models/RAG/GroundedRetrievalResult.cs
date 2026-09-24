@@ -19,3 +19,20 @@ public sealed record RetrievedEvidenceItem(
     string EvidenceType,
     float ConfidenceScore,
     string? Symbol);
+
+/// <summary>
+/// Verified document chunk retrieved from static analysis knowledge store for RAG grounding.
+/// </summary>
+public sealed record RetrievedChunkItem(
+    Guid ChunkId,
+    Guid AnalysisId,
+    Guid? SourceFileId,
+    string FilePath,
+    string? Symbol,
+    int StartLine,
+    int EndLine,
+    string Content,
+    int TokenCount,
+    int ChunkIndex,
+    Guid? EvidenceId,
+    float ConfidenceScore);
