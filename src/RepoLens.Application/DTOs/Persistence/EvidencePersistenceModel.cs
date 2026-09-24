@@ -13,4 +13,5 @@ public record EvidencePersistenceModel(
     int StartLine,
     int EndLine,
     EvidenceType EvidenceType,
-    string Description);
+    string Description,
+    float? ConfidenceScore = null);

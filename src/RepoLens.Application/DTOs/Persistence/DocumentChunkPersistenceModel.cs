@@ -11,4 +11,8 @@ public record DocumentChunkPersistenceModel(
     int TokenCount,
     int ChunkIndex,
     string? EvidenceKey,
-    Guid? EvidenceId);
+    Guid? EvidenceId,
+    int StartLine = 1,
+    int EndLine = 1,
+    float ConfidenceScore = 1.0f,
+    IReadOnlyList<Guid>? EvidenceIds = null);
