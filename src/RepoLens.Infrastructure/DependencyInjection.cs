@@ -1,7 +1,9 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using RepoLens.Application.Abstractions;
 using RepoLens.Infrastructure.Persistence;
+using RepoLens.Infrastructure.Storage;
 
 namespace RepoLens.Infrastructure;
 
@@ -14,6 +16,18 @@ public static class DependencyInjection
         services.AddDbContext<RepoLensDbContext>(options =>
             options.UseNpgsql(connectionString, b =>
                 b.MigrationsAssembly(typeof(RepoLensDbContext).Assembly.FullName)));
+
+        // Register Workspace Management (T031)
+        services.Configure<WorkspaceOptions>(opts =>
+        {
+            var section = configuration.GetSection(WorkspaceOptions.SectionName);
+            var baseDir = section[nameof(WorkspaceOptions.BaseDirectory)];
+            if (!string.IsNullOrWhiteSpace(baseDir))
+            {
+                opts.BaseDirectory = baseDir;
+            }
+        });
+        services.AddSingleton<ITemporaryWorkspaceManager, TemporaryWorkspaceManager>();
 
         // Register Query and Command Services (T060 - T069)
         services.AddScoped<RepoLens.Application.Abstractions.IAnalysisService, RepoLens.Infrastructure.Services.AnalysisService>();
