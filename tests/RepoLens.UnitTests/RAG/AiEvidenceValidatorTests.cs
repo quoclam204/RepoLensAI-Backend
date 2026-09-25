@@ -185,7 +185,7 @@ public class AiEvidenceValidatorTests
 
         Assert.False(result.IsValid);
         Assert.Equal(AnswerValidationStatus.InsufficientEvidence, result.Status);
-        Assert.Equal("Insufficient evidence in the analyzed repository to support this answer.", result.ValidatedAnswer);
+        Assert.Equal("Insufficient evidence in the analyzed repository.", result.ValidatedAnswer);
         Assert.Single(result.UnsupportedClaims);
         Assert.Empty(result.ValidatedEvidence);
     }

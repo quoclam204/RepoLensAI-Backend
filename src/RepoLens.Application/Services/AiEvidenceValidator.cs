@@ -83,10 +83,7 @@ public partial class AiEvidenceValidator : IAiEvidenceValidator
         if (chunks.Count == 0)
         {
             var isAlreadyAcknowledgingNoEvidence =
-                answer.Contains("insufficient evidence", StringComparison.OrdinalIgnoreCase) ||
-                answer.Contains("no relevant evidence", StringComparison.OrdinalIgnoreCase) ||
-                answer.Contains("no evidence found", StringComparison.OrdinalIgnoreCase) ||
-                answer.Contains("cannot find any evidence", StringComparison.OrdinalIgnoreCase);
+                InsufficientEvidenceResponse.ContainsInsufficientEvidenceAcknowledgment(answer);
 
             if (isAlreadyAcknowledgingNoEvidence)
             {

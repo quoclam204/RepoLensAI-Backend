@@ -154,6 +154,14 @@ public class RagService : IRagService, IEvidenceGroundedRagService
 
             answer = validationResult.ValidatedAnswer;
             evidenceItems = validationResult.ValidatedEvidence;
+
+            // T090: When validation concludes there is no usable evidence, surface the
+            // canonical insufficient-evidence response instead of any asserted content.
+            if (InsufficientEvidenceResponse.RequiresInsufficientEvidenceResponse(validationResult))
+            {
+                answer = InsufficientEvidenceResponse.DefaultMessage;
+                evidenceItems = [];
+            }
         }
         else
         {
@@ -182,14 +190,20 @@ public class RagService : IRagService, IEvidenceGroundedRagService
             }
 
             evidenceItems = items.AsReadOnly();
-            if (string.IsNullOrWhiteSpace(answer) && retrievedChunks.Count == 0)
+            if ((string.IsNullOrWhiteSpace(answer) && retrievedChunks.Count == 0) ||
+                (retrievedChunks.Count == 0 && !InsufficientEvidenceResponse.ContainsInsufficientEvidenceAcknowledgment(answer)))
             {
-                answer = "Insufficient evidence in the analyzed repository to answer this question.";
+                answer = InsufficientEvidenceResponse.DefaultMessage;
+                evidenceItems = [];
             }
         }
 
-        // 8. Determine confidence (T089)
-        var hasSufficientEvidence = retrievedChunks.Count > 0;
+        // 8. Determine confidence (T089) and T090 sufficiency flag.
+        // HasSufficientEvidence is false only when the final surfaced answer is the
+        // canonical insufficient-evidence response; partial grounding still counts as evidence.
+        var hasSufficientEvidence =
+            retrievedChunks.Count > 0 &&
+            !string.Equals(answer, InsufficientEvidenceResponse.DefaultMessage, StringComparison.Ordinal);
         AiConfidenceLevel confidence;
         ConfidenceEvaluationResult? confidenceDetails = null;
 

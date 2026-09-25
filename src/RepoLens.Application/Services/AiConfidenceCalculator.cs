@@ -69,10 +69,7 @@ public class AiConfidenceCalculator : IAiConfidenceCalculator
         if (chunks.Count == 0)
         {
             var isAdmittingNoEvidence =
-                request.Answer.Contains("insufficient evidence", StringComparison.OrdinalIgnoreCase) ||
-                request.Answer.Contains("no relevant evidence", StringComparison.OrdinalIgnoreCase) ||
-                request.Answer.Contains("no evidence found", StringComparison.OrdinalIgnoreCase) ||
-                request.Answer.Contains("cannot find any evidence", StringComparison.OrdinalIgnoreCase);
+                InsufficientEvidenceResponse.ContainsInsufficientEvidenceAcknowledgment(request.Answer);
 
             var noEvidenceRationale = isAdmittingNoEvidence
                 ? "Low confidence: No repository evidence chunks were retrieved; answer acknowledges lack of evidence."

@@ -79,7 +79,7 @@ public sealed record AnswerValidationOptions
     /// <summary>
     /// Standard response when evidence is insufficient or all claims are unsupported.
     /// </summary>
-    public string InsufficientEvidenceMessage { get; init; } = "Insufficient evidence in the analyzed repository to support this answer.";
+    public string InsufficientEvidenceMessage { get; init; } = InsufficientEvidenceResponse.DefaultMessage;
 }
 
 /// <summary>
