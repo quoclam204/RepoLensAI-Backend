@@ -45,6 +45,8 @@ public static class DependencyInjection
         services.AddScoped<RepoLens.Application.Abstractions.IRepositoryAnalyzer, RepoLens.Infrastructure.Adapters.Analysis.RoslynRepositoryAnalyzerAdapter>();
         services.AddScoped<RepoLens.Application.Abstractions.IArchifyAdapter, RepoLens.Application.Services.ArchifyAdapter>();
         services.AddScoped<RepoLens.Application.Abstractions.IEvidenceRetriever, RepoLens.Infrastructure.Services.EvidenceRetriever>();
+        // T086: Vector retrieval service for document chunks (pgvector cosine similarity)
+        services.AddScoped<RepoLens.Application.Abstractions.IVectorChunkRetriever, RepoLens.Infrastructure.Services.VectorChunkRetriever>();
 
         return services;
     }
