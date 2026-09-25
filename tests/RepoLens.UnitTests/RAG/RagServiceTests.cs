@@ -359,4 +359,46 @@ public class RagServiceTests
 
         Assert.Contains("dimension mismatch", ex.Message);
     }
+
+    [Fact]
+    public async Task AnswerQuestionAsync_WhenValidatorProvided_UsesValidatedAnswerAndEvidence()
+    {
+        var analysisId = Guid.NewGuid();
+        var chunk = MakeSearchResult(analysisId, "src/Services/OrderService.cs", "OrderService", 10, 20, "public class OrderService {}");
+
+        var embeddingProvider = new FakeEmbeddingProvider();
+        var retriever = new FakeVectorChunkRetriever([chunk]);
+        var aiProvider = new FakeAiProvider("The service is defined in `OrderService.cs`.");
+        var validator = new AiEvidenceValidator();
+
+        var service = new RagService(aiProvider, embeddingProvider, retriever, validator);
+
+        var result = await service.AnswerQuestionAsync(analysisId, "Where is the order service?");
+
+        Assert.NotNull(result.Validation);
+        Assert.True(result.Validation.IsValid);
+        Assert.Equal(AnswerValidationStatus.FullySupported, result.Validation.Status);
+        Assert.Equal("The service is defined in `OrderService.cs`.", result.Answer);
+    }
+
+    [Fact]
+    public async Task AnswerQuestionAsync_WhenValidatorDetectsUnsupportedClaims_MarksValidationResult()
+    {
+        var analysisId = Guid.NewGuid();
+        var chunk = MakeSearchResult(analysisId, "src/Services/OrderService.cs", "OrderService", 10, 20, "public class OrderService {}");
+
+        var embeddingProvider = new FakeEmbeddingProvider();
+        var retriever = new FakeVectorChunkRetriever([chunk]);
+        var aiProvider = new FakeAiProvider("Order service is in `OrderService.cs`. Secret vault is in `src/Auth/SecretVault.cs`.");
+        var validator = new AiEvidenceValidator();
+
+        var service = new RagService(aiProvider, embeddingProvider, retriever, validator);
+
+        var result = await service.AnswerQuestionAsync(analysisId, "Where are the services?");
+
+        Assert.NotNull(result.Validation);
+        Assert.False(result.Validation.IsValid);
+        Assert.Equal(AnswerValidationStatus.PartiallySupported, result.Validation.Status);
+        Assert.Contains("[Uncertain - unsupported by retrieved evidence]", result.Answer);
+    }
 }

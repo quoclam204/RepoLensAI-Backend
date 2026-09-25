@@ -13,4 +13,5 @@ public sealed record RagResult(
     IReadOnlyList<AiEvidenceItem> Evidence,
     AiConfidenceLevel Confidence,
     bool HasSufficientEvidence,
-    string? ContextPrompt = null);
+    string? ContextPrompt = null,
+    AnswerValidationResult? Validation = null);

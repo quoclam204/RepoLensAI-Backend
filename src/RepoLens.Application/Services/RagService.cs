@@ -38,17 +38,20 @@ public class RagService : IRagService, IEvidenceGroundedRagService
     private readonly IAiProvider _aiProvider;
     private readonly IEmbeddingProvider _embeddingProvider;
     private readonly IVectorChunkRetriever _vectorRetriever;
+    private readonly IAiEvidenceValidator? _evidenceValidator;
     private readonly RagServiceOptions _options;
 
     public RagService(
         IAiProvider aiProvider,
         IEmbeddingProvider embeddingProvider,
         IVectorChunkRetriever vectorRetriever,
+        IAiEvidenceValidator? evidenceValidator = null,
         RagServiceOptions? options = null)
     {
         _aiProvider = aiProvider ?? throw new ArgumentNullException(nameof(aiProvider));
         _embeddingProvider = embeddingProvider ?? throw new ArgumentNullException(nameof(embeddingProvider));
         _vectorRetriever = vectorRetriever ?? throw new ArgumentNullException(nameof(vectorRetriever));
+        _evidenceValidator = evidenceValidator;
         _options = options ?? RagServiceOptions.Default;
     }
 
@@ -135,29 +138,50 @@ public class RagService : IRagService, IEvidenceGroundedRagService
             throw new InvalidOperationException("AI provider returned a null response.");
         }
 
-        // 7. Evidence validation & traceability
-        var evidenceItems = new List<AiEvidenceItem>(retrievedChunks.Count);
-        foreach (var chunk in retrievedChunks)
-        {
-            evidenceItems.Add(new AiEvidenceItem
-            {
-                File = chunk.FilePath,
-                Symbol = chunk.Symbol,
-                StartLine = chunk.StartLine,
-                EndLine = chunk.EndLine,
-                Reason = $"Retrieved chunk {chunk.ChunkIndex} (similarity: {chunk.SimilarityScore:P0}, confidence: {chunk.ConfidenceScore:F2})"
-            });
-        }
+        // 7. Evidence validation & traceability (T087 + T088)
+        AnswerValidationResult? validationResult = null;
+        IReadOnlyList<AiEvidenceItem> evidenceItems;
+        var answer = aiResponse.Answer;
 
-        // Incorporate any citations returned by AI provider not already captured
-        if (aiResponse.Evidence is { Count: > 0 })
+        if (_evidenceValidator != null)
         {
-            foreach (var aiItem in aiResponse.Evidence)
+            validationResult = await _evidenceValidator.ValidateAnswerAsync(
+                new AnswerValidationRequest(aiResponse.Answer, retrievedChunks, aiResponse.Evidence),
+                cancellationToken);
+
+            answer = validationResult.ValidatedAnswer;
+            evidenceItems = validationResult.ValidatedEvidence;
+        }
+        else
+        {
+            var items = new List<AiEvidenceItem>(retrievedChunks.Count);
+            foreach (var chunk in retrievedChunks)
             {
-                if (!evidenceItems.Any(e => e.File == aiItem.File && e.StartLine == aiItem.StartLine && e.EndLine == aiItem.EndLine))
+                items.Add(new AiEvidenceItem
                 {
-                    evidenceItems.Add(aiItem);
+                    File = chunk.FilePath,
+                    Symbol = chunk.Symbol,
+                    StartLine = chunk.StartLine,
+                    EndLine = chunk.EndLine,
+                    Reason = $"Retrieved chunk {chunk.ChunkIndex} (similarity: {chunk.SimilarityScore:P0}, confidence: {chunk.ConfidenceScore:F2})"
+                });
+            }
+
+            if (aiResponse.Evidence is { Count: > 0 })
+            {
+                foreach (var aiItem in aiResponse.Evidence)
+                {
+                    if (!items.Any(e => e.File == aiItem.File && e.StartLine == aiItem.StartLine && e.EndLine == aiItem.EndLine))
+                    {
+                        items.Add(aiItem);
+                    }
                 }
+            }
+
+            evidenceItems = items.AsReadOnly();
+            if (string.IsNullOrWhiteSpace(answer) && retrievedChunks.Count == 0)
+            {
+                answer = "Insufficient evidence in the analyzed repository to answer this question.";
             }
         }
 
@@ -182,19 +206,14 @@ public class RagService : IRagService, IEvidenceGroundedRagService
             }
         }
 
-        var answer = aiResponse.Answer;
-        if (string.IsNullOrWhiteSpace(answer) && !hasSufficientEvidence)
-        {
-            answer = "Insufficient evidence in the analyzed repository to answer this question.";
-        }
-
         return new RagResult(
             Question: request.Question,
             Answer: answer,
             RetrievedChunks: retrievedChunks,
-            Evidence: evidenceItems.AsReadOnly(),
+            Evidence: evidenceItems,
             Confidence: confidence,
             HasSufficientEvidence: hasSufficientEvidence,
-            ContextPrompt: context);
+            ContextPrompt: context,
+            Validation: validationResult);
     }
 }
