@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using Pgvector;
 using RepoLens.Domain.Entities;
 
 namespace RepoLens.Infrastructure.Persistence.Configurations;
@@ -28,7 +29,10 @@ public class DocumentChunkConfiguration : IEntityTypeConfiguration<DocumentChunk
 
         // T084: Embedding vector mapped to PostgreSQL pgvector(1536)
         builder.Property(c => c.Embedding)
-            .HasColumnType("vector(1536)");
+            .HasColumnType("vector(1536)")
+            .HasConversion(
+                v => v != null ? new Vector(v) : null,
+                v => v != null ? v.ToArray() : null);
 
         // In-memory / transient RAG metadata properties (T083)
         builder.Ignore(c => c.StartLine);
