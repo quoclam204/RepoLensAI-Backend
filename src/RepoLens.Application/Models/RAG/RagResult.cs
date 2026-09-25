@@ -14,4 +14,5 @@ public sealed record RagResult(
     AiConfidenceLevel Confidence,
     bool HasSufficientEvidence,
     string? ContextPrompt = null,
-    AnswerValidationResult? Validation = null);
+    AnswerValidationResult? Validation = null,
+    ConfidenceEvaluationResult? ConfidenceDetails = null);

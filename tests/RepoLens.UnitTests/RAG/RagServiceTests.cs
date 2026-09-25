@@ -401,4 +401,57 @@ public class RagServiceTests
         Assert.Equal(AnswerValidationStatus.PartiallySupported, result.Validation.Status);
         Assert.Contains("[Uncertain - unsupported by retrieved evidence]", result.Answer);
     }
+
+    [Fact]
+    public async Task AnswerQuestionAsync_WhenConfidenceCalculatorProvided_PopulatesConfidenceDetailsAndConfidenceLevel()
+    {
+        var analysisId = Guid.NewGuid();
+        var chunks = new List<VectorChunkSearchResult>
+        {
+            MakeSearchResult(analysisId, "src/Services/OrderService.cs", "OrderService", 10, 20, "public class OrderService {}", confidence: 0.95f, similarity: 0.90),
+            MakeSearchResult(analysisId, "src/Services/IOrderService.cs", "IOrderService", 1, 10, "public interface IOrderService {}", confidence: 0.95f, similarity: 0.88),
+            MakeSearchResult(analysisId, "src/Controllers/OrderController.cs", "OrderController", 1, 30, "public class OrderController {}", confidence: 0.90f, similarity: 0.89)
+        };
+
+        var embeddingProvider = new FakeEmbeddingProvider();
+        var retriever = new FakeVectorChunkRetriever(chunks);
+        var aiProvider = new FakeAiProvider("The order service is in `OrderService.cs`.");
+        var validator = new AiEvidenceValidator();
+        var calculator = new AiConfidenceCalculator();
+
+        var service = new RagService(aiProvider, embeddingProvider, retriever, validator, calculator);
+
+        var result = await service.AnswerQuestionAsync(analysisId, "Where is the order service?");
+
+        Assert.NotNull(result.ConfidenceDetails);
+        Assert.Equal(AiConfidenceLevel.High, result.Confidence);
+        Assert.Equal(AiConfidenceLevel.High, result.ConfidenceDetails.Level);
+        Assert.True(result.ConfidenceDetails.Score >= 0.75f);
+        Assert.Contains("High confidence", result.ConfidenceDetails.Rationale);
+        Assert.NotNull(result.ConfidenceDetails.Factors);
+        Assert.True(result.ConfidenceDetails.Factors.GroundingFactor > 0.9f);
+    }
+
+    [Fact]
+    public async Task AnswerQuestionAsync_WhenConfidenceCalculatorProvidedAndClaimsUnsupported_CapsConfidenceAtLow()
+    {
+        var analysisId = Guid.NewGuid();
+        var chunk = MakeSearchResult(analysisId, "src/Services/OrderService.cs", "OrderService", 10, 20, "public class OrderService {}", confidence: 0.99f, similarity: 0.99);
+
+        var embeddingProvider = new FakeEmbeddingProvider();
+        var retriever = new FakeVectorChunkRetriever([chunk]);
+        var aiProvider = new FakeAiProvider("Completely hallucinated service in `NonExistentService.cs`.");
+        var validator = new AiEvidenceValidator();
+        var calculator = new AiConfidenceCalculator();
+
+        var service = new RagService(aiProvider, embeddingProvider, retriever, validator, calculator);
+
+        var result = await service.AnswerQuestionAsync(analysisId, "Where is the payment service?");
+
+        Assert.NotNull(result.ConfidenceDetails);
+        Assert.Equal(AiConfidenceLevel.Low, result.Confidence);
+        Assert.Equal(AiConfidenceLevel.Low, result.ConfidenceDetails.Level);
+        Assert.Equal(0.0f, result.ConfidenceDetails.Score);
+        Assert.Contains("unsupported by retrieved repository evidence", result.ConfidenceDetails.Rationale);
+    }
 }

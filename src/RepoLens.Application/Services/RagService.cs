@@ -39,6 +39,7 @@ public class RagService : IRagService, IEvidenceGroundedRagService
     private readonly IEmbeddingProvider _embeddingProvider;
     private readonly IVectorChunkRetriever _vectorRetriever;
     private readonly IAiEvidenceValidator? _evidenceValidator;
+    private readonly IAiConfidenceCalculator? _confidenceCalculator;
     private readonly RagServiceOptions _options;
 
     public RagService(
@@ -46,12 +47,14 @@ public class RagService : IRagService, IEvidenceGroundedRagService
         IEmbeddingProvider embeddingProvider,
         IVectorChunkRetriever vectorRetriever,
         IAiEvidenceValidator? evidenceValidator = null,
+        IAiConfidenceCalculator? confidenceCalculator = null,
         RagServiceOptions? options = null)
     {
         _aiProvider = aiProvider ?? throw new ArgumentNullException(nameof(aiProvider));
         _embeddingProvider = embeddingProvider ?? throw new ArgumentNullException(nameof(embeddingProvider));
         _vectorRetriever = vectorRetriever ?? throw new ArgumentNullException(nameof(vectorRetriever));
         _evidenceValidator = evidenceValidator;
+        _confidenceCalculator = confidenceCalculator;
         _options = options ?? RagServiceOptions.Default;
     }
 
@@ -185,24 +188,43 @@ public class RagService : IRagService, IEvidenceGroundedRagService
             }
         }
 
-        // Determine confidence
+        // 8. Determine confidence (T089)
         var hasSufficientEvidence = retrievedChunks.Count > 0;
-        var confidence = aiResponse.Confidence;
-        if (confidence == AiConfidenceLevel.Unknown)
+        AiConfidenceLevel confidence;
+        ConfidenceEvaluationResult? confidenceDetails = null;
+
+        if (_confidenceCalculator != null)
         {
-            if (!hasSufficientEvidence)
+            confidenceDetails = await _confidenceCalculator.EvaluateConfidenceAsync(
+                new ConfidenceEvaluationRequest(
+                    Question: request.Question,
+                    Answer: answer,
+                    RetrievedChunks: retrievedChunks,
+                    ValidationResult: validationResult,
+                    Evidence: evidenceItems),
+                cancellationToken);
+
+            confidence = confidenceDetails.Level;
+        }
+        else
+        {
+            confidence = aiResponse.Confidence;
+            if (confidence == AiConfidenceLevel.Unknown)
             {
-                confidence = AiConfidenceLevel.Low;
-            }
-            else
-            {
-                var avgConfidence = retrievedChunks.Average(c => c.ConfidenceScore);
-                confidence = avgConfidence switch
+                if (!hasSufficientEvidence)
                 {
-                    >= 0.8f => AiConfidenceLevel.High,
-                    >= 0.5f => AiConfidenceLevel.Medium,
-                    _ => AiConfidenceLevel.Low
-                };
+                    confidence = AiConfidenceLevel.Low;
+                }
+                else
+                {
+                    var avgConfidence = retrievedChunks.Average(c => c.ConfidenceScore);
+                    confidence = avgConfidence switch
+                    {
+                        >= 0.8f => AiConfidenceLevel.High,
+                        >= 0.5f => AiConfidenceLevel.Medium,
+                        _ => AiConfidenceLevel.Low
+                    };
+                }
             }
         }
 
@@ -214,6 +236,7 @@ public class RagService : IRagService, IEvidenceGroundedRagService
             Confidence: confidence,
             HasSufficientEvidence: hasSufficientEvidence,
             ContextPrompt: context,
-            Validation: validationResult);
+            Validation: validationResult,
+            ConfidenceDetails: confidenceDetails);
     }
 }

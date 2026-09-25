@@ -53,6 +53,8 @@ public static class DependencyInjection
         services.AddScoped<RepoLens.Application.Abstractions.AI.IEvidenceGroundedRagService>(sp => sp.GetRequiredService<RepoLens.Application.Services.RagService>());
         // T088: AI evidence validation service
         services.AddScoped<RepoLens.Application.Abstractions.AI.IAiEvidenceValidator, RepoLens.Application.Services.AiEvidenceValidator>();
+        // T089: AI confidence evaluation service
+        services.AddScoped<RepoLens.Application.Abstractions.AI.IAiConfidenceCalculator, RepoLens.Application.Services.AiConfidenceCalculator>();
 
         return services;
     }
