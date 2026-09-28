@@ -224,6 +224,87 @@ public class EndToEndPipelineIntegrationTests : IDisposable
         Assert.NotEmpty(chatResult.Evidence);
     }
 
+    [Fact]
+    public async Task RealGitHubRepository_AcquisitionAndPipelineExecution_Succeeds()
+    {
+        // 1. Arrange: Public minimal test repository
+        var gitUrl = "https://github.com/octocat/Hello-World";
+        using var dbContext = CreateTestDbContext("TestDb_GitE2E_" + Guid.NewGuid().ToString("N"));
+
+        var repo = new Repository
+        {
+            Id = Guid.NewGuid(),
+            Name = "octocat-Hello-World",
+            SourceType = RepositorySourceType.GitUrl,
+            SourceLocation = gitUrl,
+            Status = RepositoryStatus.Active,
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+        dbContext.Repositories.Add(repo);
+
+        var analysis = new AnalysisEntity
+        {
+            Id = Guid.NewGuid(),
+            RepositoryId = repo.Id,
+            Status = AnalysisStatus.Created,
+            CurrentStage = "Validation",
+            StartedAt = DateTimeOffset.UtcNow
+        };
+        dbContext.Analyses.Add(analysis);
+        await dbContext.SaveChangesAsync();
+
+        var workspaceOptions = Options.Create(new WorkspaceOptions { BaseDirectory = _workspaceBase });
+        var workspaceManager = new TemporaryWorkspaceManager(
+            workspaceOptions,
+            NullLogger<TemporaryWorkspaceManager>.Instance,
+            NullLogger<TemporaryWorkspace>.Instance);
+
+        var acquisitionOptions = Options.Create(new AcquisitionOptions { GitTimeoutSeconds = 30 });
+        var gitSource = new GitRepositorySource(acquisitionOptions, NullLogger<GitRepositorySource>.Instance);
+
+        var scannerOptions = Options.Create(new ScanningOptions());
+        var scannerService = new FileScanner(
+            scannerOptions,
+            new IgnoreRules(),
+            new SecretDetector(),
+            new LanguageDetector(),
+            new ProjectDetector(),
+            NullLogger<FileScanner>.Instance);
+
+        var repositoryAnalyzer = new RoslynRepositoryAnalyzerAdapter(NullLogger<RoslynRepositoryAnalyzerAdapter>.Instance);
+        var persistenceService = new AnalysisPersistenceService(dbContext, NullLogger<AnalysisPersistenceService>.Instance);
+        var fakeEmbeddingProvider = new DeterministicTestEmbeddingProvider();
+        var chunkEmbeddingService = new ChunkEmbeddingService(fakeEmbeddingProvider);
+
+        var pipeline = new AnalysisPipeline(
+            dbContext,
+            workspaceManager,
+            [gitSource],
+            scannerService,
+            repositoryAnalyzer,
+            persistenceService,
+            chunkEmbeddingService,
+            acquisitionOptions,
+            NullLogger<AnalysisPipeline>.Instance);
+
+        // 2. Act: Execute real Git acquisition and pipeline
+        var request = new RepositorySourceRequest(RepositorySourceType.GitUrl, Url: gitUrl);
+        var result = await pipeline.ExecuteAsync(analysis.Id, request);
+
+        // 3. Assert: Pipeline completes, status is Completed, workspace cleaned
+        Assert.True(result.Success, $"Git acquisition failed: {result.ErrorMessage}");
+        Assert.Equal(AnalysisStatus.Completed, result.FinalStatus);
+
+        var updatedAnalysis = await dbContext.Analyses.FindAsync(analysis.Id);
+        Assert.NotNull(updatedAnalysis);
+        Assert.Equal(AnalysisStatus.Completed, updatedAnalysis.Status);
+
+        // Workspace directory must be deleted
+        var wsPath = Path.Combine(_workspaceBase, analysis.Id.ToString());
+        Assert.False(Directory.Exists(wsPath));
+    }
+
     private sealed class DeterministicTestEmbeddingProvider : IEmbeddingProvider
     {
         public Task<IReadOnlyList<float[]>> EmbedAsync(IReadOnlyList<string> inputs, CancellationToken cancellationToken = default)
