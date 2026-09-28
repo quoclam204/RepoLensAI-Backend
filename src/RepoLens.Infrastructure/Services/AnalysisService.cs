@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using RepoLens.Application.Abstractions;
 using RepoLens.Application.Common;
@@ -13,11 +14,16 @@ namespace RepoLens.Infrastructure.Services;
 public class AnalysisService : IAnalysisService
 {
     private readonly RepoLensDbContext _context;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<AnalysisService> _logger;
 
-    public AnalysisService(RepoLensDbContext context, ILogger<AnalysisService> logger)
+    public AnalysisService(
+        RepoLensDbContext context,
+        IServiceScopeFactory scopeFactory,
+        ILogger<AnalysisService> logger)
     {
         _context = context;
+        _scopeFactory = scopeFactory;
         _logger = logger;
     }
 
@@ -58,6 +64,24 @@ public class AnalysisService : IAnalysisService
         await _context.SaveChangesAsync(ct);
 
         _logger.LogInformation("Analysis {AnalysisId} created successfully for repository {RepositoryId}", analysis.Id, repository.Id);
+
+        // Trigger background analysis pipeline execution (T052 - T054)
+        var analysisId = analysis.Id;
+        var sourceUrl = request.SourceUrl;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                using var scope = _scopeFactory.CreateScope();
+                var pipeline = scope.ServiceProvider.GetRequiredService<IAnalysisPipeline>();
+                var sourceReq = new RepositorySourceRequest(RepositorySourceType.GitUrl, Url: sourceUrl);
+                await pipeline.ExecuteAsync(analysisId, sourceReq);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Background pipeline execution failed for Git analysis {AnalysisId}", analysisId);
+            }
+        });
 
         return new CreateAnalysisResponse(
             analysis.Id,
@@ -102,6 +126,34 @@ public class AnalysisService : IAnalysisService
         await _context.SaveChangesAsync(ct);
 
         _logger.LogInformation("Analysis {AnalysisId} created successfully for ZIP upload {FileName}", analysis.Id, fileName);
+
+        // Buffer uploaded stream into memory so background pipeline can process it after HTTP request ends
+        var memStream = new MemoryStream();
+        await contentStream.CopyToAsync(memStream, ct);
+        memStream.Position = 0;
+
+        var analysisId = analysis.Id;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                using var scope = _scopeFactory.CreateScope();
+                var pipeline = scope.ServiceProvider.GetRequiredService<IAnalysisPipeline>();
+                using (memStream)
+                {
+                    var sourceReq = new RepositorySourceRequest(
+                        RepositorySourceType.ZipUpload,
+                        ContentStream: memStream,
+                        FileName: fileName,
+                        ContentLength: memStream.Length);
+                    await pipeline.ExecuteAsync(analysisId, sourceReq);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Background pipeline execution failed for ZIP analysis {AnalysisId}", analysisId);
+            }
+        });
 
         return new CreateAnalysisResponse(
             analysis.Id,
