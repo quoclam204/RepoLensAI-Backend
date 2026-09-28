@@ -30,6 +30,22 @@ public static class DependencyInjection
         });
         services.AddSingleton<ITemporaryWorkspaceManager, TemporaryWorkspaceManager>();
 
+        // Register Person 1: Repository Acquisition (T028 - T030)
+        services.Configure<RepoLens.Infrastructure.Acquisition.AcquisitionOptions>(configuration.GetSection(RepoLens.Infrastructure.Acquisition.AcquisitionOptions.SectionName));
+        services.AddScoped<RepoLens.Application.Abstractions.IRepositorySource, RepoLens.Infrastructure.Acquisition.GitRepositorySource>();
+        services.AddScoped<RepoLens.Application.Abstractions.IRepositorySource, RepoLens.Infrastructure.Acquisition.ZipRepositorySource>();
+
+        // Register Person 1: Repository Scanner & Detectors (T032 - T036)
+        services.Configure<RepoLens.Infrastructure.Scanning.ScanningOptions>(configuration.GetSection(RepoLens.Infrastructure.Scanning.ScanningOptions.SectionName));
+        services.AddSingleton<RepoLens.Infrastructure.Scanning.IgnoreRules>();
+        services.AddSingleton<RepoLens.Infrastructure.Scanning.SecretDetector>();
+        services.AddSingleton<RepoLens.Infrastructure.Scanning.LanguageDetector>();
+        services.AddSingleton<RepoLens.Infrastructure.Scanning.ProjectDetector>();
+        services.AddScoped<RepoLens.Application.Abstractions.IScannerService, RepoLens.Infrastructure.Scanning.FileScanner>();
+
+        // Register Person 1: Pipeline Orchestrator (T052 - T054)
+        services.AddScoped<RepoLens.Application.Abstractions.IAnalysisPipeline, RepoLens.Infrastructure.Pipeline.AnalysisPipeline>();
+
         // Register Query and Command Services (T060 - T069)
         services.AddScoped<RepoLens.Application.Abstractions.IAnalysisService, RepoLens.Infrastructure.Services.AnalysisService>();
         services.AddScoped<RepoLens.Application.Abstractions.IArchitectureService, RepoLens.Infrastructure.Services.ArchitectureService>();
