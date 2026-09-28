@@ -203,4 +203,99 @@ public class EvidenceRetrieverTests
         Assert.Equal("OrderService", item.Symbol);
         Assert.True(item.ConfidenceScore >= 0.85f);
     }
+
+    [Fact]
+    public async Task RetrieveDocumentChunksAsync_WithMultipleAnalyses_DoesNotLeakChunksFromOtherAnalyses()
+    {
+        // Arrange
+        using var context = CreateInMemoryDbContext();
+        var analysis1 = Guid.NewGuid();
+        var analysis2 = Guid.NewGuid();
+
+        var chunk1 = new DocumentChunk
+        {
+            Id = Guid.NewGuid(),
+            AnalysisId = analysis1,
+            Content = "Secret Repository A Content",
+            TokenCount = 10,
+            ChunkIndex = 0
+        };
+
+        var chunk2 = new DocumentChunk
+        {
+            Id = Guid.NewGuid(),
+            AnalysisId = analysis2,
+            Content = "Public Repository B Content",
+            TokenCount = 10,
+            ChunkIndex = 0
+        };
+
+        context.DocumentChunks.AddRange(chunk1, chunk2);
+        await context.SaveChangesAsync();
+
+        var retriever = new EvidenceRetriever(context);
+
+        // Act: Query for analysis 2
+        var chunks = await retriever.RetrieveDocumentChunksAsync(analysis2);
+
+        // Assert: Only chunks from analysis 2 are returned, never from analysis 1
+        Assert.Single(chunks);
+        Assert.Equal(chunk2.Id, chunks[0].ChunkId);
+        Assert.Contains("Repository B", chunks[0].Content);
+        Assert.DoesNotContain("Repository A", chunks[0].Content);
+    }
+
+    [Fact]
+    public async Task RetrieveGroundedEvidenceAsync_WithMultipleAnalyses_DoesNotLeakEvidenceFromOtherAnalyses()
+    {
+        // Arrange
+        using var context = CreateInMemoryDbContext();
+        var analysis1 = Guid.NewGuid();
+        var analysis2 = Guid.NewGuid();
+
+        var evi1 = new Evidence
+        {
+            Id = Guid.NewGuid(),
+            AnalysisId = analysis1,
+            FilePath = "src/RepoA/Secret.cs",
+            StartLine = 1,
+            EndLine = 10,
+            EvidenceType = EvidenceType.Declaration,
+            Description = "Secret token in Repo A",
+            Confidence = ConfidenceScore.High
+        };
+
+        var evi2 = new Evidence
+        {
+            Id = Guid.NewGuid(),
+            AnalysisId = analysis2,
+            FilePath = "src/RepoB/Public.cs",
+            StartLine = 1,
+            EndLine = 10,
+            EvidenceType = EvidenceType.Declaration,
+            Description = "Public service in Repo B",
+            Confidence = ConfidenceScore.High
+        };
+
+        context.Evidences.AddRange(evi1, evi2);
+        await context.SaveChangesAsync();
+
+        var retriever = new EvidenceRetriever(context);
+
+        // Act: Query for analysis 1
+        var result1 = await retriever.RetrieveGroundedEvidenceAsync(analysis1, "What is in Repo A?");
+
+        // Assert: Only analysis 1 evidence is returned
+        Assert.True(result1.HasSufficientEvidence);
+        Assert.Single(result1.Items);
+        Assert.Equal("src/RepoA/Secret.cs", result1.Items[0].FilePath);
+
+        // Act: Query for analysis 2
+        var result2 = await retriever.RetrieveGroundedEvidenceAsync(analysis2, "What is in Repo B?");
+
+        // Assert: Only analysis 2 evidence is returned
+        Assert.True(result2.HasSufficientEvidence);
+        Assert.Single(result2.Items);
+        Assert.Equal("src/RepoB/Public.cs", result2.Items[0].FilePath);
+    }
 }

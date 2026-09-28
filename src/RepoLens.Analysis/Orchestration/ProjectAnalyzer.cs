@@ -1,4 +1,5 @@
 using RepoLens.Analysis.CSharp;
+using RepoLens.Analysis.Dependencies;
 using RepoLens.Analysis.Graph;
 using RepoLens.Domain.ValueObjects;
 
@@ -13,24 +14,34 @@ public sealed record AnalysisResult(
 
 /// <summary>
 /// Orchestrates multi-file project analysis, resolving cross-file symbols and relationships,
-/// and aggregating project manifest dependencies.
+/// and aggregating project manifest dependencies (C# and npm).
 /// </summary>
 public class ProjectAnalyzer
 {
     private readonly CSharpFileAnalyzer _fileAnalyzer;
     private readonly ProjectDependencyExtractor _dependencyExtractor;
+    private readonly NpmDependencyExtractor _npmExtractor;
 
     public ProjectAnalyzer(
         CSharpFileAnalyzer? fileAnalyzer = null,
-        ProjectDependencyExtractor? dependencyExtractor = null)
+        ProjectDependencyExtractor? dependencyExtractor = null,
+        NpmDependencyExtractor? npmExtractor = null)
     {
         _fileAnalyzer = fileAnalyzer ?? new CSharpFileAnalyzer();
         _dependencyExtractor = dependencyExtractor ?? new ProjectDependencyExtractor();
+        _npmExtractor = npmExtractor ?? new NpmDependencyExtractor();
     }
 
     public AnalysisResult Analyze(
         IReadOnlyList<(string FilePath, string SourceText)> files,
         IReadOnlyList<(string CsprojPath, string CsprojContent)> csprojFiles,
+        Guid analysisJobId = default)
+        => Analyze(files, csprojFiles, null, analysisJobId);
+
+    public AnalysisResult Analyze(
+        IReadOnlyList<(string FilePath, string SourceText)> files,
+        IReadOnlyList<(string CsprojPath, string CsprojContent)> csprojFiles,
+        IReadOnlyList<(string PackageJsonPath, string PackageJsonContent)>? packageJsonFiles,
         Guid analysisJobId = default)
     {
         var effectiveJobId = analysisJobId == Guid.Empty ? Guid.NewGuid() : analysisJobId;
@@ -56,6 +67,24 @@ public class ProjectAnalyzer
             }
         }
 
+        // 2. Process Node.js Manifests (package.json) (T050)
+        if (packageJsonFiles is not null)
+        {
+            foreach (var (pkgPath, pkgContent) in packageJsonFiles)
+            {
+                try
+                {
+                    var npmResult = _npmExtractor.Analyze(pkgPath, pkgContent);
+                    packageReferences.AddRange(npmResult.Dependencies);
+                    errors.AddRange(npmResult.Errors);
+                }
+                catch (Exception ex)
+                {
+                    errors.Add($"Error analyzing package.json '{pkgPath}': {ex.Message}");
+                }
+            }
+        }
+
         if (files is null || files.Count == 0)
         {
             return new AnalysisResult(
@@ -66,7 +95,7 @@ public class ProjectAnalyzer
                 Errors: errors.AsReadOnly());
         }
 
-        // 2. Pre-scan Pass: Build global symbol dictionary across ALL files
+        // 3. Pre-scan Pass: Build global symbol dictionary across ALL files
         var globalSymbols = new Dictionary<string, KnowledgeNode>(StringComparer.OrdinalIgnoreCase);
         var fileParser = new CSharpFileParser();
 
@@ -142,7 +171,7 @@ public class ProjectAnalyzer
                          ext.Equals(".jsx", StringComparison.OrdinalIgnoreCase))
                 {
                     var tsExtractor = new TypeScript.TsSymbolExtractor();
-                    var (tsSymbols, _) = tsExtractor.ExtractWithImports(sourceText, normalizedPath);
+                    var (tsSymbols, _, tsRoutes, _) = tsExtractor.ExtractAll(sourceText, normalizedPath);
 
                     foreach (var sym in tsSymbols)
                     {
@@ -167,6 +196,19 @@ public class ProjectAnalyzer
                         globalSymbols[nodeId] = node;
                         globalSymbols[sym.Name] = node;
                     }
+
+                    foreach (var route in tsRoutes)
+                    {
+                        var endpointId = $"endpoint:{route.HttpMethod.ToLowerInvariant()}:{route.RouteTemplate}";
+                        var endpointNode = KnowledgeNode.Create(
+                            id: endpointId,
+                            name: $"{route.HttpMethod} {route.RouteTemplate}",
+                            type: KnowledgeNodeType.Endpoint,
+                            filePath: normalizedPath,
+                            location: route.Location);
+
+                        globalSymbols[endpointId] = endpointNode;
+                    }
                 }
             }
             catch (Exception ex)
@@ -175,7 +217,7 @@ public class ProjectAnalyzer
             }
         }
 
-        // 3. Full Analysis Pass: Run analyzers with the global cross-file symbol lookup
+        // 4. Full Analysis Pass: Run analyzers with the global cross-file symbol lookup
         var allNodesMap = new Dictionary<string, KnowledgeNode>(StringComparer.OrdinalIgnoreCase);
         var allRelationships = new List<KnowledgeRelationship>();
 
@@ -208,8 +250,9 @@ public class ProjectAnalyzer
                 try
                 {
                     var tsExtractor = new TypeScript.TsSymbolExtractor();
-                    var (tsSymbols, tsImports) = tsExtractor.ExtractWithImports(sourceText, normalizedPath);
+                    var (tsSymbols, tsImports, tsRoutes, tsApiCalls) = tsExtractor.ExtractAll(sourceText, normalizedPath);
 
+                    // Add declared symbols
                     foreach (var sym in tsSymbols)
                     {
                         var nodeType = sym.Kind switch
@@ -227,6 +270,7 @@ public class ProjectAnalyzer
                         allNodesMap[node.Id] = node;
                     }
 
+                    // Add imports & dependency relationships
                     foreach (var imp in tsImports)
                     {
                         var fileNodeId = $"file:{normalizedPath}";
@@ -266,6 +310,103 @@ public class ProjectAnalyzer
                             type: KnowledgeRelationshipType.DependsOn,
                             evidence: evidence));
                     }
+
+                    // Add frontend routes (T051)
+                    foreach (var route in tsRoutes)
+                    {
+                        var endpointNodeId = $"endpoint:{route.HttpMethod.ToLowerInvariant()}:{route.RouteTemplate}";
+                        var endpointNode = KnowledgeNode.Create(
+                            id: endpointNodeId,
+                            name: $"{route.HttpMethod} {route.RouteTemplate}",
+                            type: KnowledgeNodeType.Endpoint,
+                            filePath: normalizedPath,
+                            location: route.Location,
+                            properties: new Dictionary<string, string>
+                            {
+                                ["HttpMethod"] = route.HttpMethod,
+                                ["RouteTemplate"] = route.RouteTemplate,
+                                ["HandlerSymbol"] = route.HandlerOrComponent ?? ""
+                            });
+
+                        allNodesMap[endpointNode.Id] = endpointNode;
+
+                        var evidence = Evidence.EvidenceFactory.Create(
+                            effectiveJobId,
+                            normalizedPath,
+                            route.Location.StartLine,
+                            route.Location.EndLine,
+                            route.Snippet,
+                            Domain.Enums.EvidenceType.Route,
+                            ConfidenceScore.High,
+                            route.RouteTemplate);
+
+                        string sourceNodeId = $"file:{normalizedPath}";
+                        if (route.HandlerOrComponent is not null &&
+                            allNodesMap.TryGetValue($"component:{route.HandlerOrComponent}", out var compNode))
+                        {
+                            sourceNodeId = compNode.Id;
+                        }
+
+                        allRelationships.Add(KnowledgeRelationship.Create(
+                            sourceId: sourceNodeId,
+                            targetId: endpointNode.Id,
+                            type: KnowledgeRelationshipType.Exposes,
+                            evidence: evidence));
+                    }
+
+                    // Add frontend API calls (T051)
+                    foreach (var call in tsApiCalls)
+                    {
+                        var targetEndpointId = $"endpoint:{call.HttpMethod.ToLowerInvariant()}:{call.EndpointUrl}";
+                        if (!allNodesMap.ContainsKey(targetEndpointId))
+                        {
+                            allNodesMap[targetEndpointId] = KnowledgeNode.Create(
+                                id: targetEndpointId,
+                                name: $"{call.HttpMethod} {call.EndpointUrl}",
+                                type: KnowledgeNodeType.Endpoint,
+                                filePath: normalizedPath,
+                                location: call.Location,
+                                properties: new Dictionary<string, string>
+                                {
+                                    ["HttpMethod"] = call.HttpMethod,
+                                    ["RouteTemplate"] = call.EndpointUrl
+                                });
+                        }
+
+                        var evidence = Evidence.EvidenceFactory.Create(
+                            effectiveJobId,
+                            normalizedPath,
+                            call.Location.StartLine,
+                            call.Location.EndLine,
+                            call.Snippet,
+                            Domain.Enums.EvidenceType.Invocation,
+                            ConfidenceScore.Medium,
+                            call.EndpointUrl);
+
+                        var callerId = $"file:{normalizedPath}";
+                        var callerSymbol = tsSymbols
+                            .Where(s => s.Location.StartLine <= call.Location.StartLine && s.Location.EndLine >= call.Location.EndLine)
+                            .OrderByDescending(s => s.Location.StartLine)
+                            .FirstOrDefault();
+
+                        if (callerSymbol is not null)
+                        {
+                            var symNodeType = callerSymbol.Kind == TypeScript.TsSymbolKind.Component
+                                ? KnowledgeNodeType.Component
+                                : KnowledgeNodeType.Method;
+                            var symId = $"{symNodeType.ToString().ToLowerInvariant()}:{callerSymbol.Name}";
+                            if (allNodesMap.ContainsKey(symId))
+                            {
+                                callerId = symId;
+                            }
+                        }
+
+                        allRelationships.Add(KnowledgeRelationship.Create(
+                            sourceId: callerId,
+                            targetId: targetEndpointId,
+                            type: KnowledgeRelationshipType.Calls,
+                            evidence: evidence));
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -274,9 +415,21 @@ public class ProjectAnalyzer
             }
         }
 
+        var deduplicatedRelationships = new List<KnowledgeRelationship>();
+        var seenRelKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var rel in allRelationships)
+        {
+            var key = $"{rel.SourceId}->{rel.Type}->{rel.TargetId}";
+            if (seenRelKeys.Add(key))
+            {
+                deduplicatedRelationships.Add(rel);
+            }
+        }
+
         return new AnalysisResult(
             Nodes: allNodesMap.Values.ToList().AsReadOnly(),
-            Relationships: allRelationships.AsReadOnly(),
+            Relationships: deduplicatedRelationships.AsReadOnly(),
             ProjectReferences: projectReferences.AsReadOnly(),
             PackageReferences: packageReferences.AsReadOnly(),
             Errors: errors.AsReadOnly());
