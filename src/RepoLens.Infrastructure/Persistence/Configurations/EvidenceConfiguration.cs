@@ -31,6 +31,11 @@ public class EvidenceConfiguration : IEntityTypeConfiguration<Evidence>
         builder.Property(e => e.Description)
             .HasColumnType("text");
 
+        // In-memory / compatibility aliases and RAG metadata properties
+        builder.Ignore(e => e.AnalysisJobId);
+        builder.Ignore(e => e.Snippet);
+        builder.Ignore(e => e.Confidence);
+
         builder.HasOne(e => e.Analysis)
             .WithMany(a => a.Evidences)
             .HasForeignKey(e => e.AnalysisId)

@@ -15,7 +15,8 @@ public static class DependencyInjection
 
         services.AddDbContext<RepoLensDbContext>(options =>
             options.UseNpgsql(connectionString, b =>
-                b.MigrationsAssembly(typeof(RepoLensDbContext).Assembly.FullName)));
+                b.UseVector()
+                .MigrationsAssembly(typeof(RepoLensDbContext).Assembly.FullName)));
 
         // Register Workspace Management (T031)
         services.Configure<WorkspaceOptions>(opts =>
@@ -39,9 +40,21 @@ public static class DependencyInjection
         services.AddScoped<RepoLens.Application.Abstractions.ISymbolService, RepoLens.Infrastructure.Services.SymbolService>();
         services.AddScoped<RepoLens.Application.Abstractions.IEvidenceService, RepoLens.Infrastructure.Services.EvidenceService>();
         services.AddScoped<RepoLens.Application.Abstractions.IAnalysisPersistenceService, RepoLens.Infrastructure.Services.AnalysisPersistenceService>();
+        // T085: chunk embedding application service (explicit composition Analyze -> Embed -> Persist).
+        services.AddScoped<RepoLens.Application.Abstractions.AI.IChunkEmbeddingService, RepoLens.Application.Services.ChunkEmbeddingService>();
         services.AddScoped<RepoLens.Application.Abstractions.IRepositoryAnalyzer, RepoLens.Infrastructure.Adapters.Analysis.RoslynRepositoryAnalyzerAdapter>();
         services.AddScoped<RepoLens.Application.Abstractions.IArchifyAdapter, RepoLens.Application.Services.ArchifyAdapter>();
         services.AddScoped<RepoLens.Application.Abstractions.IEvidenceRetriever, RepoLens.Infrastructure.Services.EvidenceRetriever>();
+        // T086: Vector retrieval service for document chunks (pgvector cosine similarity)
+        services.AddScoped<RepoLens.Application.Abstractions.IVectorChunkRetriever, RepoLens.Infrastructure.Services.VectorChunkRetriever>();
+        // T087: Evidence-grounded RAG service
+        services.AddScoped<RepoLens.Application.Services.RagService>();
+        services.AddScoped<RepoLens.Application.Abstractions.AI.IRagService>(sp => sp.GetRequiredService<RepoLens.Application.Services.RagService>());
+        services.AddScoped<RepoLens.Application.Abstractions.AI.IEvidenceGroundedRagService>(sp => sp.GetRequiredService<RepoLens.Application.Services.RagService>());
+        // T088: AI evidence validation service
+        services.AddScoped<RepoLens.Application.Abstractions.AI.IAiEvidenceValidator, RepoLens.Application.Services.AiEvidenceValidator>();
+        // T089: AI confidence evaluation service
+        services.AddScoped<RepoLens.Application.Abstractions.AI.IAiConfidenceCalculator, RepoLens.Application.Services.AiConfidenceCalculator>();
 
         return services;
     }
