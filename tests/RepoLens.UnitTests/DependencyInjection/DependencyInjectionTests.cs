@@ -41,11 +41,13 @@ public class DependencyInjectionTests
         var chunkEmbeddingService = scope.ServiceProvider.GetRequiredService<IChunkEmbeddingService>();
         var ragService = scope.ServiceProvider.GetRequiredService<IRagService>();
         var pipeline = scope.ServiceProvider.GetRequiredService<IAnalysisPipeline>();
+        var analysisQueue = scope.ServiceProvider.GetRequiredService<IAnalysisQueue>();
 
         Assert.NotNull(aiProvider);
         Assert.NotNull(embeddingProvider);
         Assert.NotNull(chunkEmbeddingService);
         Assert.NotNull(ragService);
         Assert.NotNull(pipeline);
+        Assert.NotNull(analysisQueue);
     }
 }

@@ -37,6 +37,12 @@ RepoLens AI is built using Clean Architecture principles with strict unidirectio
 POST /api/analyses (Git URL or ZIP)
   │
   ▼
+[Controller] ───────────────► Enqueues AnalysisWorkItem to ChannelAnalysisQueue (bounded, cap 100)
+  │
+  ▼
+[AnalysisBackgroundWorker] ─► BackgroundService dequeues job with scoped DI lifecycle
+  │
+  ▼
 [Validation Stage] ────────► RepositoryValidator checks size, URL, file counts
   │
   ▼

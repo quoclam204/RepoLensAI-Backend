@@ -54,7 +54,8 @@ All endpoints conform to `contracts/api.md` and are available in OpenAPI/Swagger
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/analyses/{id}/overview` | High-level statistics, detected languages, project count |
-| `GET` | `/api/analyses/{id}/architecture` | Graph nodes (projects) and dependency edges |
+| `GET` | `/api/analyses/{id}/architecture` | Graph nodes (projects) and dependency edges (supports `?format=archify`) |
+| `GET` | `/api/analyses/{id}/architecture/archify` | Archify-compatible C4 specification document for frontend/Archify viewer |
 | `GET` | `/api/analyses/{id}/dependencies` | Code dependencies (project/package/symbol references) |
 | `GET` | `/api/analyses/{id}/endpoints` | Discovered HTTP endpoints (method, route, controller) |
 | `GET` | `/api/analyses/{id}/database` | Detected EF Core database entities and relationships |

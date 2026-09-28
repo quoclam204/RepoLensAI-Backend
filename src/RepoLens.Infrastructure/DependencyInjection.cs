@@ -43,7 +43,9 @@ public static class DependencyInjection
         services.AddSingleton<RepoLens.Infrastructure.Scanning.ProjectDetector>();
         services.AddScoped<RepoLens.Application.Abstractions.IScannerService, RepoLens.Infrastructure.Scanning.FileScanner>();
 
-        // Register Person 1: Pipeline Orchestrator (T052 - T054)
+        // Register Pipeline Orchestration & Background Worker (T052 - T054)
+        services.AddSingleton<RepoLens.Application.Abstractions.IAnalysisQueue, RepoLens.Infrastructure.Background.ChannelAnalysisQueue>();
+        services.AddHostedService<RepoLens.Infrastructure.Background.AnalysisBackgroundWorker>();
         services.AddScoped<RepoLens.Application.Abstractions.IAnalysisPipeline, RepoLens.Infrastructure.Pipeline.AnalysisPipeline>();
 
         // Register Query and Command Services (T060 - T069)
