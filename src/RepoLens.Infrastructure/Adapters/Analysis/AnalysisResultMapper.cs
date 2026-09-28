@@ -28,7 +28,7 @@ public static class AnalysisResultMapper
 
         foreach (var proj in scan.Projects)
         {
-            var projId = Guid.NewGuid();
+            var projId = CreateDeterministicGuid($"project:{analysisId}:{proj.RelativePath}");
             projectPathToId[proj.RelativePath] = projId;
 
             projectModels.Add(new ProjectPersistenceModel(
@@ -45,7 +45,7 @@ public static class AnalysisResultMapper
 
         foreach (var file in scan.SourceFiles)
         {
-            var fileId = Guid.NewGuid();
+            var fileId = CreateDeterministicGuid($"file:{analysisId}:{file.RelativePath}");
             filePathToId[file.RelativePath] = fileId;
 
             // Match enclosing project
@@ -61,7 +61,7 @@ public static class AnalysisResultMapper
                 Path: file.RelativePath,
                 Language: file.Extension.TrimStart('.').ToLowerInvariant(),
                 Size: file.SizeInBytes,
-                Hash: string.Empty,
+                Hash: file.Hash,
                 AnalysisStatus: FileAnalysisStatus.Analyzed));
         }
 
@@ -77,7 +77,7 @@ public static class AnalysisResultMapper
             var key = $"ev:{evi.FilePath}:{evi.StartLine}-{evi.EndLine}";
             if (!evidenceKeyToId.ContainsKey(key))
             {
-                var eviId = evi.Id != Guid.Empty ? evi.Id : Guid.NewGuid();
+                var eviId = evi.Id != Guid.Empty ? evi.Id : CreateDeterministicGuid($"evidence:{analysisId}:{key}");
                 evidenceKeyToId[key] = eviId;
 
                 evidenceModels.Add(new EvidencePersistenceModel(
@@ -100,7 +100,12 @@ public static class AnalysisResultMapper
         {
             if (IsCodeSymbol(node.Type, out var symType))
             {
-                var symId = Guid.NewGuid();
+                if (symbolKeyToId.ContainsKey(node.Id))
+                {
+                    continue;
+                }
+
+                var symId = CreateDeterministicGuid($"symbol:{analysisId}:{node.Id}");
                 symbolKeyToId[node.Id] = symId;
 
                 var startLine = node.Location?.StartLine ?? 1;
@@ -119,11 +124,19 @@ public static class AnalysisResultMapper
             }
         }
 
-        // 5. Map Dependencies
+        // 5. Map Dependencies (with deduplication)
         var depModels = new List<DependencyPersistenceModel>(graph.Relationships.Count);
+        var seenDeps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         foreach (var rel in graph.Relationships)
         {
             var depType = MapRelationshipType(rel.Type);
+            var depKey = $"{rel.SourceId}->{depType}->{rel.TargetId}";
+            if (!seenDeps.Add(depKey))
+            {
+                continue;
+            }
+
             string? evidenceKey = null;
             Guid? evidenceId = null;
 
@@ -137,7 +150,7 @@ public static class AnalysisResultMapper
             }
 
             depModels.Add(new DependencyPersistenceModel(
-                Id: Guid.NewGuid(),
+                Id: CreateDeterministicGuid($"dep:{analysisId}:{depKey}"),
                 SourceId: rel.SourceId,
                 TargetId: rel.TargetId,
                 DependencyType: depType,
@@ -145,12 +158,20 @@ public static class AnalysisResultMapper
                 EvidenceId: evidenceId));
         }
 
-        // 6. Map ApiEndpoints
+        // 6. Map ApiEndpoints (with deduplication)
         var endpointModels = new List<ApiEndpointPersistenceModel>();
+        var seenEndpoints = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         foreach (var node in graph.Nodes.Where(n => n.Type == KnowledgeNodeType.Endpoint))
         {
             var httpMethod = node.Properties.GetValueOrDefault("HttpMethod", "GET");
             var route = node.Properties.GetValueOrDefault("Route", node.Name);
+            var epKey = $"{httpMethod}:{route}";
+            if (!seenEndpoints.Add(epKey))
+            {
+                continue;
+            }
+
             var controller = node.Properties.GetValueOrDefault("Controller");
             var action = node.Properties.GetValueOrDefault("Action");
 
@@ -165,7 +186,7 @@ public static class AnalysisResultMapper
             }
 
             endpointModels.Add(new ApiEndpointPersistenceModel(
-                Id: Guid.NewGuid(),
+                Id: CreateDeterministicGuid($"endpoint:{analysisId}:{epKey}"),
                 ProjectId: null,
                 ProjectPath: null,
                 Method: httpMethod,
@@ -185,7 +206,12 @@ public static class AnalysisResultMapper
 
         foreach (var node in graph.Nodes.Where(n => n.Type == KnowledgeNodeType.DatabaseEntity))
         {
-            var entityId = Guid.NewGuid();
+            if (dbEntityKeyToId.ContainsKey(node.Id))
+            {
+                continue;
+            }
+
+            var entityId = CreateDeterministicGuid($"dbentity:{analysisId}:{node.Id}");
             dbEntityKeyToId[node.Id] = entityId;
 
             dbEntityModels.Add(new DatabaseEntityPersistenceModel(
@@ -197,8 +223,10 @@ public static class AnalysisResultMapper
                 SourceSymbolId: null));
         }
 
-        // 8. Map DatabaseRelationships
+        // 8. Map DatabaseRelationships (with deduplication)
         var dbRelModels = new List<DatabaseRelationshipPersistenceModel>();
+        var seenDbRels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         foreach (var rel in graph.Relationships)
         {
             if (dbEntityKeyToId.TryGetValue(rel.SourceId, out var srcEntityId) &&
@@ -211,6 +239,12 @@ public static class AnalysisResultMapper
                     _ => DatabaseRelationshipType.OneToMany
                 };
 
+                var relKey = $"{srcEntityId}->{relType}->{tgtEntityId}";
+                if (!seenDbRels.Add(relKey))
+                {
+                    continue;
+                }
+
                 string? eviKey = null;
                 Guid? eviId = null;
                 if (rel.Evidence != null)
@@ -221,7 +255,7 @@ public static class AnalysisResultMapper
                 }
 
                 dbRelModels.Add(new DatabaseRelationshipPersistenceModel(
-                    Id: Guid.NewGuid(),
+                    Id: CreateDeterministicGuid($"dbrel:{analysisId}:{relKey}"),
                     SourceEntityName: rel.SourceId,
                     SourceEntityId: srcEntityId,
                     TargetEntityName: rel.TargetId,
@@ -234,7 +268,7 @@ public static class AnalysisResultMapper
 
         // 9. Map Issues
         var issueModels = analysisResult.AllErrors.Select(err => new AnalysisIssuePersistenceModel(
-            Id: Guid.NewGuid(),
+            Id: CreateDeterministicGuid($"issue:{analysisId}:{err}"),
             FilePath: null,
             IssueType: IssueType.ParserFailure,
             Severity: IssueSeverity.Warning,
@@ -296,6 +330,24 @@ public static class AnalysisResultMapper
             if (!primaryEvidenceId.HasValue && allEvidenceIds.Count > 0)
             {
                 primaryEvidenceId = allEvidenceIds[0];
+            }
+            else if (!primaryEvidenceId.HasValue)
+            {
+                var newEviId = CreateDeterministicGuid($"evidence:{analysisId}:{evidenceKey}");
+                primaryEvidenceId = newEviId;
+                allEvidenceIds.Add(newEviId);
+                evidenceKeyToId[evidenceKey] = newEviId;
+
+                evidenceModels.Add(new EvidencePersistenceModel(
+                    Id: newEviId,
+                    EvidenceKey: evidenceKey,
+                    FilePath: c.FilePath,
+                    Symbol: c.Symbol,
+                    StartLine: c.StartLine,
+                    EndLine: c.EndLine,
+                    EvidenceType: c.Symbol != null ? EvidenceType.Declaration : EvidenceType.Configuration,
+                    Description: $"Chunk evidence for {c.FilePath}:{c.StartLine}-{c.EndLine}",
+                    ConfidenceScore: c.ConfidenceScore));
             }
 
             chunkModels.Add(new DocumentChunkPersistenceModel(

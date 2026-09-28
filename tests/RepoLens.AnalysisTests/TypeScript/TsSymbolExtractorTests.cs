@@ -145,4 +145,44 @@ public class TsSymbolExtractorTests
         // Assert
         Assert.Empty(symbols);
     }
+
+    [Fact]
+    public void ExtractAll_WithRoutesAndApiCalls_ExtractsRoutesAndCallsAccurately()
+    {
+        // Arrange
+        var tsxCode = """
+            import React from "react";
+            import { Route } from "react-router-dom";
+            import axios from "axios";
+
+            export function App() {
+                return (
+                    <div>
+                        <Route path="/orders" element={<OrderList />} />
+                        <Route path="/users" component={UserList} />
+                    </div>
+                );
+            }
+
+            export async function loadData() {
+                const orders = await axios.get("/api/orders");
+                const res = await fetch("/api/users");
+                await axios.post("/api/orders/create");
+            }
+            """;
+
+        // Act
+        var (symbols, imports, routes, apiCalls) = _extractor.ExtractAll(tsxCode, "App.tsx");
+
+        // Assert - Routes
+        Assert.Equal(2, routes.Count);
+        Assert.Contains(routes, r => r.RouteTemplate == "/orders" && r.HandlerOrComponent == "OrderList" && r.HttpMethod == "GET");
+        Assert.Contains(routes, r => r.RouteTemplate == "/users" && r.HandlerOrComponent == "UserList" && r.HttpMethod == "GET");
+
+        // Assert - API calls
+        Assert.Equal(3, apiCalls.Count);
+        Assert.Contains(apiCalls, c => c.HttpMethod == "GET" && c.EndpointUrl == "/api/orders");
+        Assert.Contains(apiCalls, c => c.HttpMethod == "GET" && c.EndpointUrl == "/api/users");
+        Assert.Contains(apiCalls, c => c.HttpMethod == "POST" && c.EndpointUrl == "/api/orders/create");
+    }
 }

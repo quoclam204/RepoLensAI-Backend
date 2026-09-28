@@ -257,4 +257,63 @@ public class RepositoryScannerTests : IDisposable
     {
         Assert.ThrowsAny<ArgumentException>(() => _scanner.Scan(invalidPath!));
     }
+
+    [Fact]
+    public void Scan_ComputesSha256HashForScannedFiles()
+    {
+        // Arrange
+        var filePath = Path.Combine(_testDir, "TestFile.cs");
+        File.WriteAllText(filePath, "public class Hashed {}");
+
+        // Act
+        var result = _scanner.Scan(_testDir);
+
+        // Assert
+        var file = Assert.Single(result.SourceFiles);
+        Assert.NotEmpty(file.Hash);
+        Assert.Equal(64, file.Hash.Length); // 64 hex characters for SHA-256
+        Assert.Matches("^[0-9a-f]{64}$", file.Hash);
+    }
+
+    [Fact]
+    public void Scan_IgnoresDotEnvAndSecretFilesAndDirectories()
+    {
+        // Arrange
+        File.WriteAllText(Path.Combine(_testDir, "Valid.cs"), "public class Valid {}");
+        File.WriteAllText(Path.Combine(_testDir, ".env"), "SECRET_KEY=12345");
+        File.WriteAllText(Path.Combine(_testDir, ".env.production"), "DATABASE_URL=postgres://...");
+        File.WriteAllText(Path.Combine(_testDir, "appsettings.secrets.json"), "{\"secret\": true}");
+
+        var secretsDir = Path.Combine(_testDir, "secrets");
+        Directory.CreateDirectory(secretsDir);
+        File.WriteAllText(Path.Combine(secretsDir, "key.pem"), "sensitive");
+
+        // Act
+        var result = _scanner.Scan(_testDir);
+
+        // Assert
+        Assert.Single(result.SourceFiles);
+        Assert.Equal("Valid.cs", result.SourceFiles[0].RelativePath);
+        Assert.DoesNotContain(result.SourceFiles, f => f.RelativePath.Contains(".env"));
+        Assert.DoesNotContain(result.SourceFiles, f => f.RelativePath.Contains("secrets"));
+        Assert.DoesNotContain(result.ConfigurationFiles, f => f.RelativePath.Contains("secrets"));
+    }
+
+    [Fact]
+    public void Scan_DiscoversDocumentationFiles()
+    {
+        // Arrange
+        File.WriteAllText(Path.Combine(_testDir, "README.md"), "# Readme");
+        var docsDir = Path.Combine(_testDir, "docs");
+        Directory.CreateDirectory(docsDir);
+        File.WriteAllText(Path.Combine(docsDir, "architecture.md"), "# Architecture");
+
+        // Act
+        var result = _scanner.Scan(_testDir);
+
+        // Assert
+        Assert.Equal(2, result.SourceFiles.Count);
+        Assert.Contains(result.SourceFiles, f => f.RelativePath == "README.md" && f.Category == "Documentation");
+        Assert.Contains(result.SourceFiles, f => f.RelativePath == "docs/architecture.md" && f.Category == "Documentation");
+    }
 }

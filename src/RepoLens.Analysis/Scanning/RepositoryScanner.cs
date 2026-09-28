@@ -5,7 +5,8 @@ public sealed record ScannedFile(
     string FullPath,
     string Extension,
     long SizeInBytes,
-    string Category);
+    string Category,
+    string Hash = "");
 
 public sealed record ScannedProject(
     string ProjectName,
@@ -30,7 +31,8 @@ public class RepositoryScanner
     private static readonly HashSet<string> IgnoredDirectories = new(StringComparer.OrdinalIgnoreCase)
     {
         ".git", ".vs", ".vscode", ".idea", "bin", "obj", "node_modules", "dist", "build",
-        "coverage", "out", "target", ".next", ".nuxt", ".output", "tmp", "temp", "artifacts"
+        "coverage", "out", "target", ".next", ".nuxt", ".output", "tmp", "temp", "artifacts",
+        "secrets", ".secrets"
     };
 
     private static readonly HashSet<string> CSharpExtensions = new(StringComparer.OrdinalIgnoreCase)
@@ -51,6 +53,11 @@ public class RepositoryScanner
     private static readonly HashSet<string> ConfigExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".json", ".yaml", ".yml", ".xml", ".config"
+    };
+
+    private static readonly HashSet<string> DocumentationExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".md", ".markdown", ".txt", ".rst", ".adoc"
     };
 
     public ScannedRepository Scan(
@@ -133,6 +140,25 @@ public class RepositoryScanner
     {
         cancellationToken.ThrowIfCancellationRequested();
 
+        var rootWithSeparator = rootFullPath.EndsWith(Path.DirectorySeparatorChar)
+            ? rootFullPath
+            : rootFullPath + Path.DirectorySeparatorChar;
+
+        // Path traversal safety check on current directory
+        if (!currentDir.Equals(rootFullPath, StringComparison.OrdinalIgnoreCase) &&
+            !currentDir.StartsWith(rootWithSeparator, StringComparison.OrdinalIgnoreCase))
+        {
+            scanErrors.Add($"Path traversal attempt detected: {currentDir}");
+            return;
+        }
+
+        var dirRelative = Path.GetRelativePath(rootFullPath, currentDir).Replace('\\', '/');
+        if (dirRelative.StartsWith("..") || Path.IsPathRooted(dirRelative))
+        {
+            scanErrors.Add($"Path traversal attempt detected: {currentDir}");
+            return;
+        }
+
         DirectoryInfo dirInfo;
         try
         {
@@ -153,13 +179,19 @@ public class RepositoryScanner
                 var fileFullPath = file.FullName;
 
                 // Path traversal safety check
-                if (!fileFullPath.StartsWith(rootFullPath, StringComparison.OrdinalIgnoreCase))
+                if (!fileFullPath.StartsWith(rootWithSeparator, StringComparison.OrdinalIgnoreCase))
                 {
                     scanErrors.Add($"Path traversal attempt detected: {fileFullPath}");
                     continue;
                 }
 
                 var relativePath = Path.GetRelativePath(rootFullPath, fileFullPath).Replace('\\', '/');
+                if (relativePath.StartsWith("..") || Path.IsPathRooted(relativePath))
+                {
+                    scanErrors.Add($"Path traversal attempt detected: {fileFullPath}");
+                    continue;
+                }
+
                 var ext = file.Extension;
                 var fileName = file.Name;
 
@@ -212,20 +244,24 @@ public class RepositoryScanner
                         FullPath: fileFullPath.Replace('\\', '/'),
                         ProjectType: "Node"));
 
+                    var pkgHash = ComputeFileHash(fileFullPath);
                     configFiles.Add(new ScannedFile(
                         RelativePath: relativePath,
                         FullPath: fileFullPath.Replace('\\', '/'),
                         Extension: ext,
                         SizeInBytes: file.Length,
-                        Category: "Configuration"));
+                        Category: "Configuration",
+                        Hash: pkgHash));
                     continue;
                 }
 
-                // Check generated files to ignore
-                if (IsGeneratedFile(fileName))
+                // Check generated and secret/env files to ignore (T033)
+                if (IsIgnoredFile(fileName))
                 {
                     continue;
                 }
+
+                var fileHash = ComputeFileHash(fileFullPath);
 
                 // Categorize source files
                 if (CSharpExtensions.Contains(ext))
@@ -235,7 +271,8 @@ public class RepositoryScanner
                         FullPath: fileFullPath.Replace('\\', '/'),
                         Extension: ext,
                         SizeInBytes: file.Length,
-                        Category: "CSharp"));
+                        Category: "CSharp",
+                        Hash: fileHash));
                 }
                 else if (TypeScriptExtensions.Contains(ext))
                 {
@@ -244,7 +281,8 @@ public class RepositoryScanner
                         FullPath: fileFullPath.Replace('\\', '/'),
                         Extension: ext,
                         SizeInBytes: file.Length,
-                        Category: "TypeScript"));
+                        Category: "TypeScript",
+                        Hash: fileHash));
                 }
                 else if (JavaScriptExtensions.Contains(ext))
                 {
@@ -253,7 +291,18 @@ public class RepositoryScanner
                         FullPath: fileFullPath.Replace('\\', '/'),
                         Extension: ext,
                         SizeInBytes: file.Length,
-                        Category: "JavaScript"));
+                        Category: "JavaScript",
+                        Hash: fileHash));
+                }
+                else if (DocumentationExtensions.Contains(ext))
+                {
+                    sourceFiles.Add(new ScannedFile(
+                        RelativePath: relativePath,
+                        FullPath: fileFullPath.Replace('\\', '/'),
+                        Extension: ext,
+                        SizeInBytes: file.Length,
+                        Category: "Documentation",
+                        Hash: fileHash));
                 }
                 else if (IsRelevantConfigFile(fileName, ext))
                 {
@@ -262,7 +311,8 @@ public class RepositoryScanner
                         FullPath: fileFullPath.Replace('\\', '/'),
                         Extension: ext,
                         SizeInBytes: file.Length,
-                        Category: "Configuration"));
+                        Category: "Configuration",
+                        Hash: fileHash));
                 }
             }
         }
@@ -308,6 +358,25 @@ public class RepositoryScanner
         }
     }
 
+    private static bool IsIgnoredFile(string fileName)
+    {
+        if (IsGeneratedFile(fileName))
+        {
+            return true;
+        }
+
+        // Ignore .env and secret files (T033 / NFR-SEC-001)
+        if (fileName.Equals(".env", StringComparison.OrdinalIgnoreCase) ||
+            fileName.StartsWith(".env.", StringComparison.OrdinalIgnoreCase) ||
+            fileName.EndsWith(".secrets.json", StringComparison.OrdinalIgnoreCase) ||
+            fileName.Contains(".secret.", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
     private static bool IsGeneratedFile(string fileName)
     {
         return fileName.EndsWith(".g.cs", StringComparison.OrdinalIgnoreCase) ||
@@ -315,6 +384,19 @@ public class RepositoryScanner
                fileName.EndsWith(".AssemblyInfo.cs", StringComparison.OrdinalIgnoreCase) ||
                fileName.EndsWith(".AssemblyAttributes.cs", StringComparison.OrdinalIgnoreCase) ||
                fileName.EndsWith(".Designer.cs", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string ComputeFileHash(string filePath)
+    {
+        try
+        {
+            using var stream = File.OpenRead(filePath);
+            return Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(stream));
+        }
+        catch
+        {
+            return string.Empty;
+        }
     }
 
     private static bool IsRelevantConfigFile(string fileName, string ext)

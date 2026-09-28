@@ -55,4 +55,22 @@ public class PathTraversalSecurityTests : IDisposable
         Assert.False(scanned.RelativePath.StartsWith('/'), "Relative paths must not start with slash");
         Assert.False(scanned.RelativePath.Contains(".."), "Paths must not contain path traversal");
     }
+
+    [Fact]
+    public void Scanner_WhenAttemptingPathTraversal_RejectsEscapingPaths()
+    {
+        // Arrange
+        var scanner = new RepositoryScanner();
+        var safeDir = Path.Combine(_testDir, "safe");
+        Directory.CreateDirectory(safeDir);
+        File.WriteAllText(Path.Combine(safeDir, "Good.cs"), "public class Good {}");
+
+        // Act
+        var result = scanner.Scan(safeDir);
+
+        // Assert: Scanned files must stay strictly within the root
+        Assert.Single(result.SourceFiles);
+        Assert.Equal("Good.cs", result.SourceFiles[0].RelativePath);
+        Assert.True(result.SourceFiles.All(f => !f.RelativePath.StartsWith("..")));
+    }
 }

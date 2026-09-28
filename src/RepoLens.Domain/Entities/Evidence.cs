@@ -48,9 +48,13 @@ public class Evidence
         ValueObjects.ConfidenceScore? confidence = null,
         string? symbol = null)
     {
+        var id = analysisJobId != Guid.Empty
+            ? CreateDeterministicGuid($"evidence:{analysisJobId}:{location.FilePath}:{location.StartLine}-{location.EndLine}:{evidenceType}:{symbol}")
+            : Guid.NewGuid();
+
         return new Evidence
         {
-            Id = Guid.NewGuid(),
+            Id = id,
             AnalysisId = analysisJobId,
             FilePath = location.FilePath,
             StartLine = location.StartLine,
@@ -60,6 +64,14 @@ public class Evidence
             Confidence = confidence,
             Symbol = symbol
         };
+    }
+
+    private static Guid CreateDeterministicGuid(string input)
+    {
+        var hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(input));
+        Span<byte> guidBytes = stackalloc byte[16];
+        hash.AsSpan(0, 16).CopyTo(guidBytes);
+        return new Guid(guidBytes);
     }
 
     #region Navigation Properties

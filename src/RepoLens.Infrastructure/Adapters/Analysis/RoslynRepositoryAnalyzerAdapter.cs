@@ -47,7 +47,7 @@ public class RoslynRepositoryAnalyzerAdapter : IRepositoryAnalyzer
             analysisId, analysisResult.Analysis.Nodes.Count, analysisResult.Analysis.Relationships.Count, analysisResult.AllErrors.Count);
 
         // Map to persistence model
-        var persistenceModel = AnalysisResultMapper.Map(analysisResult, analysisId);
+        var persistenceModel = AnalysisResultMapper.Map(analysisResult, analysisId, analysisResult.FileContents);
 
         return persistenceModel;
     }

@@ -27,8 +27,22 @@ public sealed record TsDiscoveredImport(
     SourceLocation Location,
     string Snippet);
 
+public sealed record TsDiscoveredRoute(
+    string RouteTemplate,
+    string HttpMethod,
+    string? HandlerOrComponent,
+    SourceLocation Location,
+    string Snippet);
+
+public sealed record TsDiscoveredApiCall(
+    string HttpMethod,
+    string EndpointUrl,
+    SourceLocation Location,
+    string Snippet);
+
 /// <summary>
-/// MVP regex/heuristic symbol extractor for TypeScript / JavaScript files without requiring a full Node.js or TypeScript compiler runtime.
+/// MVP regex/heuristic symbol, route, and API call extractor for TypeScript / JavaScript files
+/// without requiring a full Node.js or TypeScript compiler runtime (T047, T048, T049, T051).
 /// </summary>
 public partial class TsSymbolExtractor
 {
@@ -48,12 +62,31 @@ public partial class TsSymbolExtractor
     [GeneratedRegex(@"^\s*import\s+(?:(?:(?:\*\s+as\s+[A-Za-z0-9_$]+|\{[^}]*\}|[A-Za-z0-9_$]+)\s*,?\s*)*(?:\{[^}]*\}\s*)?)?from\s+['""](?<module>[^'""]+)['""]", RegexOptions.Multiline)]
     private static partial Regex ImportDeclarationRegex();
 
+    // Regex for fetch('url') or fetch("url") or fetch(`url`)
+    [GeneratedRegex(@"(?i)\bfetch\s*\(\s*['""`](?<url>[^'""`]+)['""`]")]
+    private static partial Regex FetchCallRegex();
+
+    // Regex for axios.get('url'), apiClient.post('url'), http.get('url'), etc.
+    [GeneratedRegex(@"(?i)\b(?:axios|apiClient|api|http|client)\.(?<method>get|post|put|delete|patch)\s*\(\s*['""`](?<url>[^'""`]+)['""`]")]
+    private static partial Regex AxiosOrClientCallRegex();
+
+    // Regex for React Route: <Route path="/users" element={<Users />} /> or component={Users}
+    [GeneratedRegex(@"(?i)<Route\s+[^>]*path=['""](?<route>[^'""]+)['""]")]
+    private static partial Regex ReactRoutePathRegex();
+
+    [GeneratedRegex(@"(?i)(?:element=\{<|component=\{)(?<comp>[A-Za-z0-9_$]+)")]
+    private static partial Regex ReactComponentRefRegex();
+
+    // Regex for express route: app.get('/api/users', ...) or router.post('/api/users', ...)
+    [GeneratedRegex(@"(?i)\b(?:app|router)\.(?<method>get|post|put|delete|patch)\s*\(\s*['""](?<route>[^'""]+)['""]")]
+    private static partial Regex ExpressRouteRegex();
+
     /// <summary>
     /// Extracts symbols from TypeScript / JavaScript source code.
     /// </summary>
     public IReadOnlyList<TsDiscoveredSymbol> Extract(string sourceCode, string filePath = "unknown.ts")
     {
-        return ExtractWithImports(sourceCode, filePath).Symbols;
+        return ExtractAll(sourceCode, filePath).Symbols;
     }
 
     /// <summary>
@@ -61,10 +94,25 @@ public partial class TsSymbolExtractor
     /// </summary>
     public (IReadOnlyList<TsDiscoveredSymbol> Symbols, IReadOnlyList<TsDiscoveredImport> Imports) ExtractWithImports(string sourceCode, string filePath = "unknown.ts")
     {
+        var all = ExtractAll(sourceCode, filePath);
+        return (all.Symbols, all.Imports);
+    }
+
+    /// <summary>
+    /// Extracts declared symbols, module imports, frontend routes, and API calls from TypeScript / JavaScript source code.
+    /// </summary>
+    public (IReadOnlyList<TsDiscoveredSymbol> Symbols,
+            IReadOnlyList<TsDiscoveredImport> Imports,
+            IReadOnlyList<TsDiscoveredRoute> Routes,
+            IReadOnlyList<TsDiscoveredApiCall> ApiCalls) ExtractAll(string sourceCode, string filePath = "unknown.ts")
+    {
         ArgumentNullException.ThrowIfNull(sourceCode);
 
         var symbols = new List<TsDiscoveredSymbol>();
         var imports = new List<TsDiscoveredImport>();
+        var routes = new List<TsDiscoveredRoute>();
+        var apiCalls = new List<TsDiscoveredApiCall>();
+
         var lines = sourceCode.Split(["\r\n", "\r", "\n"], StringSplitOptions.None);
         bool inBlockComment = false;
         bool isJsxFile = filePath.EndsWith(".tsx", StringComparison.OrdinalIgnoreCase) ||
@@ -99,7 +147,7 @@ public partial class TsSymbolExtractor
                 continue;
             }
 
-            // Check import declaration: import ... from '...'
+            // 1. Check import declaration: import ... from '...'
             var importMatch = ImportDeclarationRegex().Match(line);
             if (importMatch.Success)
             {
@@ -111,7 +159,66 @@ public partial class TsSymbolExtractor
                 continue;
             }
 
-            // Check class / interface / type / enum
+            // 2. Check React Route: <Route path="/users" ... />
+            var reactRouteMatch = ReactRoutePathRegex().Match(line);
+            if (reactRouteMatch.Success)
+            {
+                var routeTemplate = reactRouteMatch.Groups["route"].Value;
+                var compMatch = ReactComponentRefRegex().Match(line);
+                var comp = compMatch.Success ? compMatch.Groups["comp"].Value : null;
+
+                routes.Add(new TsDiscoveredRoute(
+                    RouteTemplate: routeTemplate,
+                    HttpMethod: "GET",
+                    HandlerOrComponent: comp,
+                    Location: new SourceLocation(filePath, lineNumber, lineNumber),
+                    Snippet: trimmed));
+            }
+
+            // 3. Check Express / router route: app.get('/api/...', ...)
+            var expressRouteMatch = ExpressRouteRegex().Match(line);
+            if (expressRouteMatch.Success)
+            {
+                var method = expressRouteMatch.Groups["method"].Value.ToUpperInvariant();
+                var routeTemplate = expressRouteMatch.Groups["route"].Value;
+
+                routes.Add(new TsDiscoveredRoute(
+                    RouteTemplate: routeTemplate,
+                    HttpMethod: method,
+                    HandlerOrComponent: $"{Path.GetFileNameWithoutExtension(filePath)}.{method}",
+                    Location: new SourceLocation(filePath, lineNumber, lineNumber),
+                    Snippet: trimmed));
+            }
+
+            // 4. Check API call: axios.get(...), apiClient.post(...), http.get(...)
+            var clientCallMatch = AxiosOrClientCallRegex().Match(line);
+            if (clientCallMatch.Success)
+            {
+                var method = clientCallMatch.Groups["method"].Value.ToUpperInvariant();
+                var url = clientCallMatch.Groups["url"].Value;
+
+                apiCalls.Add(new TsDiscoveredApiCall(
+                    HttpMethod: method,
+                    EndpointUrl: url,
+                    Location: new SourceLocation(filePath, lineNumber, lineNumber),
+                    Snippet: trimmed));
+            }
+            else
+            {
+                // Check fetch('...')
+                var fetchMatch = FetchCallRegex().Match(line);
+                if (fetchMatch.Success)
+                {
+                    var url = fetchMatch.Groups["url"].Value;
+                    apiCalls.Add(new TsDiscoveredApiCall(
+                        HttpMethod: "GET",
+                        EndpointUrl: url,
+                        Location: new SourceLocation(filePath, lineNumber, lineNumber),
+                        Snippet: trimmed));
+                }
+            }
+
+            // 5. Check class / interface / type / enum
             var typeMatch = TypeOrClassDeclarationRegex().Match(line);
             if (typeMatch.Success)
             {
@@ -138,7 +245,7 @@ public partial class TsSymbolExtractor
                 continue;
             }
 
-            // Check function declaration
+            // 6. Check function declaration
             var funcMatch = FunctionDeclarationRegex().Match(line);
             if (funcMatch.Success)
             {
@@ -156,7 +263,7 @@ public partial class TsSymbolExtractor
                 continue;
             }
 
-            // Check arrow function / const export
+            // 7. Check arrow function / const export
             var arrowMatch = ArrowFunctionOrConstRegex().Match(line);
             if (arrowMatch.Success)
             {
@@ -173,7 +280,7 @@ public partial class TsSymbolExtractor
             }
         }
 
-        return (symbols.AsReadOnly(), imports.AsReadOnly());
+        return (symbols.AsReadOnly(), imports.AsReadOnly(), routes.AsReadOnly(), apiCalls.AsReadOnly());
     }
 
     /// <summary>
