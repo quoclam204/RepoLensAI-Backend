@@ -1,10 +1,10 @@
-﻿namespace RepoLens.IntegrationTests;
+namespace RepoLens.IntegrationTests;
 
-public class UnitTest1
+public class AssemblySanityCheck
 {
     [Fact]
-    public void Test1()
+    public void IntegrationTestAssembly_LoadsSuccessfully()
     {
-
+        Assert.NotNull(typeof(AssemblySanityCheck).Assembly);
     }
 }
