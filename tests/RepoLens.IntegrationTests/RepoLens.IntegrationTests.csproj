@@ -13,6 +13,7 @@
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="9.0.2" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="9.0.2" />
   </ItemGroup>
 
   <ItemGroup>
@@ -20,6 +21,7 @@
     <ProjectReference Include="..\..\src\RepoLens.Application\RepoLens.Application.csproj" />
     <ProjectReference Include="..\..\src\RepoLens.Analysis\RepoLens.Analysis.csproj" />
     <ProjectReference Include="..\..\src\RepoLens.Infrastructure\RepoLens.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\RepoLens.Api\RepoLens.Api.csproj" />
   </ItemGroup>
 
   <ItemGroup>
