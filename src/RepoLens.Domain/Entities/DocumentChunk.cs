@@ -1,3 +1,5 @@
+using RepoLens.Domain.Entities;
+
 namespace RepoLens.Domain.Entities;
 
 /// <summary>
@@ -18,6 +20,12 @@ public class DocumentChunk
     public int ChunkIndex { get; set; }
 
     public Guid? EvidenceId { get; set; }
+
+    /// <summary>
+    /// Embedding vector for vector search (T084).
+    /// Stored as float[] and mapped to PostgreSQL pgvector vector(1536).
+    /// </summary>
+    public float[]? Embedding { get; set; }
 
     // Transient in-memory / RAG metadata accessors (T083 / FR-009)
     public int StartLine => Evidence != null ? Evidence.StartLine : _startLine;
@@ -75,9 +83,6 @@ public class DocumentChunk
         }
         return chunk;
     }
-
-    // TODO: [Giả định cần chốt với nhóm] Thuộc tính Embedding (Vector pgvector) chưa khai báo ở T025,
-    // tuân thủ nghiêm ngặt SRS §36 (chỉ bổ sung khi Người 5 triển khai task Vector/RAG).
 
     #region Navigation Properties
 

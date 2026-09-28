@@ -20,6 +20,7 @@
     <ProjectReference Include="..\..\src\RepoLens.Application\RepoLens.Application.csproj" />
     <ProjectReference Include="..\..\src\RepoLens.Analysis\RepoLens.Analysis.csproj" />
     <ProjectReference Include="..\..\src\RepoLens.Infrastructure\RepoLens.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\RepoLens.Api\RepoLens.Api.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -462,7 +462,9 @@ public class AnalysisPersistenceService : IAnalysisPersistenceService
                     Content = chunkDto.Content,
                     TokenCount = chunkDto.TokenCount,
                     ChunkIndex = chunkDto.ChunkIndex,
-                    EvidenceId = chunkEviId
+                    EvidenceId = chunkEviId,
+                    // T085: validated embedding vector (null = not embedded); T084 maps to vector(1536).
+                    Embedding = chunkDto.Embedding
                 };
                 chunk.SetLineRange(chunkDto.StartLine, chunkDto.EndLine);
                 chunk.SetConfidence(chunkDto.ConfidenceScore);
