@@ -72,6 +72,12 @@ public static class DependencyInjection
         // T089: AI confidence evaluation service
         services.AddScoped<RepoLens.Application.Abstractions.AI.IAiConfidenceCalculator, RepoLens.Application.Services.AiConfidenceCalculator>();
 
+        // T111: MemoryCache for safe query caching
+        services.AddMemoryCache();
+
+        // T112: Observability & Metrics
+        services.AddSingleton<RepoLens.Application.Abstractions.IAnalysisMetrics, RepoLens.Infrastructure.Observability.AnalysisMetrics>();
+
         return services;
     }
 }

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using RepoLens.Application.Abstractions;
 using RepoLens.Application.Common;
 using RepoLens.Application.DTOs.Architecture;
@@ -7,17 +8,28 @@ using RepoLens.Infrastructure.Persistence;
 
 namespace RepoLens.Infrastructure.Services;
 
+/// <summary>
+/// Architecture query service with safe, deterministic memory caching partitioned strictly by AnalysisId (T063, T111).
+/// </summary>
 public class ArchitectureService : IArchitectureService
 {
     private readonly RepoLensDbContext _context;
+    private readonly IMemoryCache? _cache;
 
-    public ArchitectureService(RepoLensDbContext context)
+    public ArchitectureService(RepoLensDbContext context, IMemoryCache? cache = null)
     {
         _context = context;
+        _cache = cache;
     }
 
     public async Task<ArchitectureResponse?> GetArchitectureAsync(Guid analysisId, CancellationToken ct = default)
     {
+        var cacheKey = $"repolens:arch:{analysisId}";
+        if (_cache != null && _cache.TryGetValue(cacheKey, out ArchitectureResponse? cached) && cached != null)
+        {
+            return cached;
+        }
+
         var analysis = await _context.Analyses
             .AsNoTracking()
             .FirstOrDefaultAsync(a => a.Id == analysisId, ct);
@@ -68,6 +80,8 @@ public class ArchitectureService : IArchitectureService
             EvidenceId: d.EvidenceId?.ToString()
         )).ToList();
 
-        return new ArchitectureResponse(analysis.Id, nodes, edges);
+        var response = new ArchitectureResponse(analysis.Id, nodes, edges);
+        _cache?.Set(cacheKey, response, TimeSpan.FromMinutes(10));
+        return response;
     }
 }
