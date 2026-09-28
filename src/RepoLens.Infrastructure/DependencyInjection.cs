@@ -72,6 +72,31 @@ public static class DependencyInjection
         // T089: AI confidence evaluation service
         services.AddScoped<RepoLens.Application.Abstractions.AI.IAiConfidenceCalculator, RepoLens.Application.Services.AiConfidenceCalculator>();
 
+        // T081 & T082: AI & Embedding Providers and Options
+        services.AddSingleton<HttpClient>();
+        services.Configure<RepoLens.Infrastructure.Ai.AiOptions>(configuration.GetSection(RepoLens.Infrastructure.Ai.AiOptions.SectionName));
+        services.Configure<RepoLens.Infrastructure.Ai.EmbeddingOptions>(configuration.GetSection(RepoLens.Infrastructure.Ai.EmbeddingOptions.SectionName));
+
+        services.AddScoped<RepoLens.Application.Abstractions.AI.IEmbeddingProvider>(sp =>
+        {
+            var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<RepoLens.Infrastructure.Ai.EmbeddingOptions>>().Value;
+            if (string.Equals(options.Provider, "OpenAi", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(options.ApiKey))
+            {
+                return ActivatorUtilities.CreateInstance<RepoLens.Infrastructure.Ai.OpenAiEmbeddingProvider>(sp);
+            }
+            return ActivatorUtilities.CreateInstance<RepoLens.Infrastructure.Ai.DeterministicEmbeddingProvider>(sp);
+        });
+
+        services.AddScoped<RepoLens.Application.Abstractions.AI.IAiProvider>(sp =>
+        {
+            var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<RepoLens.Infrastructure.Ai.AiOptions>>().Value;
+            if (string.Equals(options.Provider, "OpenAi", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(options.ApiKey))
+            {
+                return ActivatorUtilities.CreateInstance<RepoLens.Infrastructure.Ai.OpenAiProvider>(sp);
+            }
+            return ActivatorUtilities.CreateInstance<RepoLens.Infrastructure.Ai.DeterministicAiProvider>(sp);
+        });
+
         // T111: MemoryCache for safe query caching
         services.AddMemoryCache();
 

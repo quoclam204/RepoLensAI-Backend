@@ -116,4 +116,45 @@ public class SecurityAcceptanceTests : IDisposable
         Assert.False(isValid);
         Assert.Contains("maximum allowed upload size", error ?? "");
     }
+
+    [Fact]
+    public async Task T103_T123_DecompressionBomb_AbortsWhenUncompressedBytesExceedLimitDuringDecompression()
+    {
+        // Arrange: Create a zip with 100KB payload but options restrict to 50KB
+        var options = new AcquisitionOptions
+        {
+            MaxUncompressedBytes = 50 * 1024,
+            MaxSingleFileBytes = 50 * 1024
+        };
+
+        var zipStream = new MemoryStream();
+        using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            var entry = archive.CreateEntry("payload.txt", CompressionLevel.Fastest);
+            using var entryStream = entry.Open();
+            var payload = new byte[80 * 1024]; // 80 KB
+            Array.Fill(payload, (byte)'A');
+            entryStream.Write(payload);
+        }
+        zipStream.Position = 0;
+
+        var source = new ZipRepositorySource(
+            Options.Create(options),
+            NullLogger<ZipRepositorySource>.Instance);
+
+        var workspace = new TemporaryWorkspace(Guid.NewGuid(), Path.Combine(_testDir, "bomb_ws"), NullLogger<TemporaryWorkspace>.Instance);
+
+        var request = new RepositorySourceRequest(
+            RepositorySourceType.ZipUpload,
+            ContentStream: zipStream,
+            FileName: "bomb.zip",
+            ContentLength: zipStream.Length);
+
+        // Act
+        var result = await source.AcquireAsync(request, workspace);
+
+        // Assert: Extraction should be aborted
+        Assert.False(result.Success);
+        Assert.Contains("exceeds maximum", result.ErrorMessage ?? "");
+    }
 }
