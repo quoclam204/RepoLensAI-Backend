@@ -222,14 +222,14 @@ public class RagService : IRagService, IEvidenceGroundedRagService
         }
         else
         {
-            confidence = aiResponse.Confidence;
-            if (confidence == AiConfidenceLevel.Unknown)
+            if (!hasSufficientEvidence)
             {
-                if (!hasSufficientEvidence)
-                {
-                    confidence = AiConfidenceLevel.Low;
-                }
-                else
+                confidence = AiConfidenceLevel.Unknown;
+            }
+            else
+            {
+                confidence = aiResponse.Confidence;
+                if (confidence == AiConfidenceLevel.Unknown)
                 {
                     var avgConfidence = retrievedChunks.Average(c => c.ConfidenceScore);
                     confidence = avgConfidence switch
