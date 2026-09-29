@@ -30,24 +30,7 @@ public class ArchitectureService : IArchitectureService
             return cached;
         }
 
-        var analysis = await _context.Analyses
-            .AsNoTracking()
-            .FirstOrDefaultAsync(a => a.Id == analysisId, ct);
-
-        if (analysis == null)
-        {
-            return null;
-        }
-
-        if (analysis.Status == AnalysisStatus.Failed)
-        {
-            throw new AnalysisFailedException(analysis.CurrentStage);
-        }
-
-        if (analysis.Status != AnalysisStatus.Completed)
-        {
-            throw new AnalysisNotReadyException(analysis.Status.ToString());
-        }
+        await AnalysisValidationHelper.EnsureAnalysisCompletedAsync(_context, analysisId, ct);
 
         var projects = await _context.Projects
             .AsNoTracking()
@@ -80,7 +63,7 @@ public class ArchitectureService : IArchitectureService
             EvidenceId: d.EvidenceId?.ToString()
         )).ToList();
 
-        var response = new ArchitectureResponse(analysis.Id, nodes, edges);
+        var response = new ArchitectureResponse(analysisId, nodes, edges);
         _cache?.Set(cacheKey, response, TimeSpan.FromMinutes(10));
         return response;
     }

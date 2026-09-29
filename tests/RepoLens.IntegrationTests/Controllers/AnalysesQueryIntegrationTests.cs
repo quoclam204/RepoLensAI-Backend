@@ -55,6 +55,56 @@ public class AnalysesQueryIntegrationTests : IClassFixture<CustomWebApplicationF
     }
 
     [Fact]
+    public async Task UploadZip_WithValidZipFile_Returns202AcceptedWithLocation()
+    {
+        // Arrange
+        using var zipMemoryStream = new MemoryStream();
+        using (var archive = new System.IO.Compression.ZipArchive(zipMemoryStream, System.IO.Compression.ZipArchiveMode.Create, leaveOpen: true))
+        {
+            var entry = archive.CreateEntry("Test.cs");
+            using var writer = new StreamWriter(entry.Open());
+            writer.Write("public class Test {}");
+        }
+
+        using var content = new MultipartFormDataContent();
+        using var streamContent = new ByteArrayContent(zipMemoryStream.ToArray());
+        streamContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/zip");
+        content.Add(streamContent, "file", "sample-repo.zip");
+
+        // Act
+        var response = await _client.PostAsync("/api/analyses/upload", content);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.NotNull(response.Headers.Location);
+
+        var result = await response.Content.ReadFromJsonAsync<CreateAnalysisResponse>(JsonOptions);
+        Assert.NotNull(result);
+        Assert.NotEqual(Guid.Empty, result.AnalysisId);
+        Assert.NotEqual(Guid.Empty, result.RepositoryId);
+        Assert.Equal("Created", result.Status);
+        Assert.Contains(result.AnalysisId.ToString(), response.Headers.Location.ToString());
+    }
+
+    [Fact]
+    public async Task UploadZip_WithEmptyFile_Returns400BadRequest()
+    {
+        // Arrange
+        using var content = new MultipartFormDataContent();
+        using var emptyContent = new ByteArrayContent(Array.Empty<byte>());
+        content.Add(emptyContent, "file", "empty.zip");
+
+        // Act
+        var response = await _client.PostAsync("/api/analyses/upload", content);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var error = await response.Content.ReadFromJsonAsync<ErrorResponse>(JsonOptions);
+        Assert.NotNull(error);
+        Assert.Equal("INVALID_ZIP", error.Error.Code);
+    }
+
+    [Fact]
     public async Task GetStatus_WhenAnalysisExists_Returns200OkWithProgress()
     {
         // Arrange

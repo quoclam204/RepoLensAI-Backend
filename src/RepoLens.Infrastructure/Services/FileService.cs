@@ -17,6 +17,8 @@ public class FileService : IFileService
 
     public async Task<PagedResult<FileItemDto>> GetFilesAsync(Guid analysisId, FileFilterParams filter, CancellationToken ct = default)
     {
+        await AnalysisValidationHelper.EnsureAnalysisCompletedAsync(_context, analysisId, ct);
+
         var page = Math.Max(1, filter.Page);
         var pageSize = Math.Clamp(filter.PageSize, 1, 100);
 
@@ -68,6 +70,8 @@ public class FileService : IFileService
 
     public async Task<FileDetailResponse?> GetFileDetailAsync(Guid analysisId, Guid fileId, CancellationToken ct = default)
     {
+        await AnalysisValidationHelper.EnsureAnalysisCompletedAsync(_context, analysisId, ct);
+
         var file = await _context.SourceFiles
             .AsNoTracking()
             .Include(f => f.Symbols)
@@ -99,6 +103,8 @@ public class FileService : IFileService
 
     public async Task<FileContentResponse?> GetFileContentAsync(Guid analysisId, Guid fileId, CancellationToken ct = default)
     {
+        await AnalysisValidationHelper.EnsureAnalysisCompletedAsync(_context, analysisId, ct);
+
         var file = await _context.SourceFiles
             .AsNoTracking()
             .FirstOrDefaultAsync(f => f.AnalysisId == analysisId && f.Id == fileId, ct);

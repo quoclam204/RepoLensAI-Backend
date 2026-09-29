@@ -162,4 +162,36 @@ public class FilesAndSymbolsQueryIntegrationTests : IClassFixture<CustomWebAppli
         Assert.NotNull(error);
         Assert.Equal("SYMBOL_NOT_FOUND", error.Error.Code);
     }
+
+    [Fact]
+    public async Task GetFiles_WhenAnalysisNotFound_Returns404NotFound()
+    {
+        // Arrange
+        var nonExistentAnalysisId = Guid.NewGuid();
+
+        // Act
+        var response = await _client.GetAsync($"/api/analyses/{nonExistentAnalysisId}/files");
+
+        // Assert
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        var error = await response.Content.ReadFromJsonAsync<ErrorResponse>(JsonOptions);
+        Assert.NotNull(error);
+        Assert.Equal("ANALYSIS_NOT_FOUND", error.Error.Code);
+    }
+
+    [Fact]
+    public async Task GetFiles_WhenAnalysisNotReady_Returns409Conflict()
+    {
+        // Arrange
+        var analyzingId = await QueryApiTestFixture.SeedAnalyzingAnalysisAsync(_factory);
+
+        // Act
+        var response = await _client.GetAsync($"/api/analyses/{analyzingId}/files");
+
+        // Assert
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var error = await response.Content.ReadFromJsonAsync<ErrorResponse>(JsonOptions);
+        Assert.NotNull(error);
+        Assert.Equal("ANALYSIS_NOT_READY", error.Error.Code);
+    }
 }

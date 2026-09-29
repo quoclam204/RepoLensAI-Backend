@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using RepoLens.Application.Abstractions;
@@ -16,7 +17,6 @@ namespace RepoLens.Infrastructure.Pipeline;
 /// <summary>
 /// Pipeline orchestrator and lifecycle coordinator (T052 - T054, FR-002, FR-003).
 /// Coordinates repository acquisition, security validation, workspace management,
-/// static analysis, chunk embeddings, persistence, and analysis stage transitions.
 /// scanning, static analysis, embedding, persistence, and lifecycle transitions.
 /// </summary>
 public sealed class AnalysisPipeline : IAnalysisPipeline
@@ -25,15 +25,13 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
     private readonly ITemporaryWorkspaceManager _workspaceManager;
     private readonly IEnumerable<IRepositorySource> _sources;
     private readonly IScannerService _scannerService;
-    private readonly IRepositoryAnalyzer _repositoryAnalyzer;
-    private readonly IAnalysisPersistenceService _persistenceService;
-    private readonly IChunkEmbeddingService _chunkEmbeddingService;
-    private readonly AcquisitionOptions _acquisitionOptions;
-    private readonly ILogger<AnalysisPipeline> _logger;
     private readonly IRepositoryAnalyzer? _repositoryAnalyzer;
     private readonly IAnalysisPersistenceService? _persistenceService;
     private readonly IChunkEmbeddingService? _chunkEmbeddingService;
+    private readonly AcquisitionOptions _acquisitionOptions;
+    private readonly ILogger<AnalysisPipeline> _logger;
 
+    [ActivatorUtilitiesConstructor]
     public AnalysisPipeline(
         RepoLensDbContext dbContext,
         ITemporaryWorkspaceManager workspaceManager,
@@ -43,23 +41,40 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
         IAnalysisPersistenceService persistenceService,
         IChunkEmbeddingService chunkEmbeddingService,
         IOptions<AcquisitionOptions> acquisitionOptions,
-        ILogger<AnalysisPipeline> logger,
-        IRepositoryAnalyzer? repositoryAnalyzer = null,
-        IAnalysisPersistenceService? persistenceService = null,
-        IChunkEmbeddingService? chunkEmbeddingService = null)
+        ILogger<AnalysisPipeline> logger)
     {
         _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
         _workspaceManager = workspaceManager ?? throw new ArgumentNullException(nameof(workspaceManager));
         _sources = sources ?? throw new ArgumentNullException(nameof(sources));
         _scannerService = scannerService ?? throw new ArgumentNullException(nameof(scannerService));
-        _repositoryAnalyzer = repositoryAnalyzer ?? throw new ArgumentNullException(nameof(repositoryAnalyzer));
-        _persistenceService = persistenceService ?? throw new ArgumentNullException(nameof(persistenceService));
-        _chunkEmbeddingService = chunkEmbeddingService ?? throw new ArgumentNullException(nameof(chunkEmbeddingService));
-        _acquisitionOptions = acquisitionOptions?.Value ?? new AcquisitionOptions();
-        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _repositoryAnalyzer = repositoryAnalyzer;
         _persistenceService = persistenceService;
         _chunkEmbeddingService = chunkEmbeddingService;
+        _acquisitionOptions = acquisitionOptions?.Value ?? new AcquisitionOptions();
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    }
+
+    public AnalysisPipeline(
+        RepoLensDbContext dbContext,
+        ITemporaryWorkspaceManager workspaceManager,
+        IEnumerable<IRepositorySource> sources,
+        IScannerService scannerService,
+        IOptions<AcquisitionOptions> acquisitionOptions,
+        ILogger<AnalysisPipeline> logger,
+        IRepositoryAnalyzer? repositoryAnalyzer = null,
+        IAnalysisPersistenceService? persistenceService = null,
+        IChunkEmbeddingService? chunkEmbeddingService = null)
+        : this(
+            dbContext,
+            workspaceManager,
+            sources,
+            scannerService,
+            repositoryAnalyzer!,
+            persistenceService!,
+            chunkEmbeddingService!,
+            acquisitionOptions,
+            logger)
+    {
     }
 
     /// <inheritdoc />
@@ -134,21 +149,42 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
             // -------------------------------------------------------------
             await UpdateAnalysisStageAsync(analysis, AnalysisStatus.Analyzing, AnalysisStage.StaticAnalysis, cancellationToken);
 
-            var analysisResult = await _repositoryAnalyzer.AnalyzeAsync(workspace.RootPath, analysisId, cancellationToken);
+            var analysisResult = _repositoryAnalyzer != null
+                ? await _repositoryAnalyzer.AnalyzeAsync(workspace.RootPath, analysisId, cancellationToken)
+                : null;
 
             // -------------------------------------------------------------
             // Stage 5: Document Chunk Embeddings
             // -------------------------------------------------------------
-            await UpdateAnalysisStageAsync(analysis, AnalysisStatus.Indexing, AnalysisStage.Embedding, cancellationToken);
-
-            var (embeddedResult, _) = await _chunkEmbeddingService.PopulateEmbeddingsAsync(analysisResult, cancellationToken);
+            if (_chunkEmbeddingService != null && analysisResult != null && analysisResult.DocumentChunks.Count > 0)
+            {
+                try
+                {
+                    await UpdateAnalysisStageAsync(analysis, AnalysisStatus.Indexing, AnalysisStage.Embedding, cancellationToken);
+                    var (embeddedResult, _) = await _chunkEmbeddingService.PopulateEmbeddingsAsync(analysisResult, cancellationToken);
+                    analysisResult = embeddedResult;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Document chunk embedding failed or was skipped for analysis {AnalysisId}. Proceeding with persistence.", analysisId);
+                }
+            }
 
             // -------------------------------------------------------------
             // Stage 6: Persistence
             // -------------------------------------------------------------
             await UpdateAnalysisStageAsync(analysis, AnalysisStatus.Indexing, AnalysisStage.Persistence, cancellationToken);
 
-            await _persistenceService.PersistAnalysisResultAsync(embeddedResult, cancellationToken);
+            if (_persistenceService != null && analysisResult != null)
+            {
+                analysisResult.NewStatus = AnalysisStatus.Completed;
+                analysisResult.CurrentStage = AnalysisStage.Completed.ToString();
+                await _persistenceService.PersistAnalysisResultAsync(analysisResult, cancellationToken);
+            }
+            else
+            {
+                await PersistScanResultsAsync(analysis, scanResult, cancellationToken);
+            }
 
             // -------------------------------------------------------------
             // Stage 7: Completion
@@ -159,61 +195,6 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
             await _dbContext.SaveChangesAsync(cancellationToken);
 
             _logger.LogInformation("Pipeline completed successfully for analysis {AnalysisId}.", analysisId);
-
-            // Stage 4: Static Analysis (Roslyn AST & Knowledge Graph)
-            // -------------------------------------------------------------
-            if (_repositoryAnalyzer != null)
-            {
-                await UpdateAnalysisStageAsync(analysis, AnalysisStatus.Running, AnalysisStage.StaticAnalysis, cancellationToken);
-                var analysisResultModel = await _repositoryAnalyzer.AnalyzeAsync(workspace.RootPath, analysisId, cancellationToken);
-
-                // -------------------------------------------------------------
-                // Stage 5: Document Chunk Embedding (if available)
-                // -------------------------------------------------------------
-                if (_chunkEmbeddingService != null && analysisResultModel.DocumentChunks.Count > 0)
-                {
-                    try
-                    {
-                        await UpdateAnalysisStageAsync(analysis, AnalysisStatus.Running, AnalysisStage.Embedding, cancellationToken);
-                        var (embeddedResult, _) = await _chunkEmbeddingService.PopulateEmbeddingsAsync(analysisResultModel, cancellationToken);
-                        analysisResultModel = embeddedResult;
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Document chunk embedding failed or was skipped for analysis {AnalysisId}. Proceeding with persistence.", analysisId);
-                    }
-                }
-
-                // -------------------------------------------------------------
-                // Stage 6: Persistence & Completion
-                // -------------------------------------------------------------
-                if (_persistenceService != null)
-                {
-                    await UpdateAnalysisStageAsync(analysis, AnalysisStatus.Running, AnalysisStage.Persistence, cancellationToken);
-                    analysisResultModel.NewStatus = AnalysisStatus.Completed;
-                    analysisResultModel.CurrentStage = AnalysisStage.Completed.ToString();
-                    await _persistenceService.PersistAnalysisResultAsync(analysisResultModel, cancellationToken);
-                }
-                else
-                {
-                    await PersistScanResultsAsync(analysis, scanResult, cancellationToken);
-                    analysis.Status = AnalysisStatus.Completed;
-                    analysis.CurrentStage = AnalysisStage.Completed.ToString();
-                    analysis.CompletedAt = DateTimeOffset.UtcNow;
-                    await _dbContext.SaveChangesAsync(cancellationToken);
-                }
-            }
-            else
-            {
-                // Fallback when no static analyzer is registered: persist basic scan results
-                await PersistScanResultsAsync(analysis, scanResult, cancellationToken);
-                analysis.Status = AnalysisStatus.Completed;
-                analysis.CurrentStage = AnalysisStage.Completed.ToString();
-                analysis.CompletedAt = DateTimeOffset.UtcNow;
-                await _dbContext.SaveChangesAsync(cancellationToken);
-            }
-
-            _logger.LogInformation("Pipeline execution completed successfully for analysis {AnalysisId}", analysisId);
             return AnalysisPipelineResult.Succeeded(AnalysisStage.Completed, scanResult);
         }
         catch (OperationCanceledException)
@@ -221,7 +202,6 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
             _logger.LogWarning("Pipeline execution was cancelled for analysis {AnalysisId}", analysisId);
             if (analysis != null)
             {
-                await MarkAnalysisFailedAsync(analysis, AnalysisStage.Validation, "Operation was cancelled.", CancellationToken.None);
                 var failedStage = Enum.TryParse<AnalysisStage>(analysis.CurrentStage, out var stg) ? stg : AnalysisStage.Validation;
                 await MarkAnalysisFailedAsync(analysis, failedStage, "Operation was cancelled.", CancellationToken.None);
             }
@@ -236,7 +216,6 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
                 failedStage = Enum.TryParse<AnalysisStage>(analysis.CurrentStage, out var stg) ? stg : AnalysisStage.Validation;
                 await MarkAnalysisFailedAsync(analysis, failedStage, $"Pipeline execution failed: {ex.Message}", CancellationToken.None);
             }
-            return AnalysisPipelineResult.Failed(AnalysisStage.Validation, ex.Message);
             return AnalysisPipelineResult.Failed(failedStage, ex.Message);
         }
         finally
@@ -272,15 +251,61 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
         await _dbContext.SaveChangesAsync(cancellationToken);
     }
 
+    private async Task PersistScanResultsAsync(
+        AnalysisEntity analysis,
+        Application.Models.Scanning.ScanResult scanResult,
+        CancellationToken cancellationToken)
+    {
+        // Add SourceFiles to DbContext
+        foreach (var file in scanResult.Files)
+        {
+            var sourceFile = new SourceFile
+            {
+                Id = Guid.NewGuid(),
+                AnalysisId = analysis.Id,
+                Path = file.RelativePath,
+                Language = file.Language,
+                Size = file.Size,
+                Hash = file.Hash,
+                AnalysisStatus = FileAnalysisStatus.Pending
+            };
+            _dbContext.SourceFiles.Add(sourceFile);
+        }
+
+        // Add Projects to DbContext
+        foreach (var proj in scanResult.DetectedProjects)
+        {
+            var project = new Project
+            {
+                Id = Guid.NewGuid(),
+                AnalysisId = analysis.Id,
+                Name = proj.Name,
+                Path = proj.RelativePath,
+                ProjectType = proj.ProjectType.ToString()
+            };
+            _dbContext.Projects.Add(project);
+        }
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+
     private async Task CleanupWorkspaceSafeAsync(ITemporaryWorkspace workspace)
     {
         try
         {
-            await workspace.CleanupAsync();
+            await _workspaceManager.CleanupWorkspaceAsync(workspace.AnalysisId);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to clean up workspace for analysis {AnalysisId}", workspace.AnalysisId);
+            try
+            {
+                await workspace.CleanupAsync();
+            }
+            catch
+            {
+                // ignore secondary cleanup exception
+            }
         }
     }
 }
