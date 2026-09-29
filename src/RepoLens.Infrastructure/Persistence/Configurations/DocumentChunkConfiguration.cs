@@ -27,12 +27,20 @@ public class DocumentChunkConfiguration : IEntityTypeConfiguration<DocumentChunk
         builder.Property(c => c.ChunkIndex)
             .IsRequired();
 
-        // T084: Embedding vector mapped to PostgreSQL pgvector(1536)
-        builder.Property(c => c.Embedding)
-            .HasColumnType("vector(1536)")
-            .HasConversion(
-                v => v != null ? new Vector(v) : null,
-                v => v != null ? v.ToArray() : null);
+        // T084: Embedding vector mapped to PostgreSQL pgvector(1536) if available, or native real[]
+        if (RepoLensDbContext.HasPgvectorExtension)
+        {
+            builder.Property(c => c.Embedding)
+                .HasColumnType("vector(1536)")
+                .HasConversion(
+                    v => v != null ? new Vector(v) : null,
+                    v => v != null ? v.ToArray() : null);
+        }
+        else
+        {
+            builder.Property(c => c.Embedding)
+                .HasColumnType("real[]");
+        }
 
         // In-memory / transient RAG metadata properties (T083)
         builder.Ignore(c => c.StartLine);

@@ -62,6 +62,23 @@ public class AnalysisPersistenceService : IAnalysisPersistenceService
                 });
             }
 
+            if (projects.Count == 0 && (result.SourceFiles.Count > 0 || result.ApiEndpoints.Count > 0))
+            {
+                var defaultProjId = Guid.NewGuid();
+                var defaultProject = new Project
+                {
+                    Id = defaultProjId,
+                    AnalysisId = result.AnalysisId,
+                    Name = "Root",
+                    Path = string.Empty,
+                    Language = result.SourceFiles.Count > 0 ? (result.SourceFiles[0].Language ?? "General") : "General",
+                    ProjectType = "General"
+                };
+                projects.Add(defaultProject);
+                projectPathMap.TryAdd(string.Empty, defaultProjId);
+                projectIdSet.Add(defaultProjId);
+            }
+
             if (projects.Count > 0)
             {
                 await _context.Projects.AddRangeAsync(projects, ct);
@@ -79,7 +96,7 @@ public class AnalysisPersistenceService : IAnalysisPersistenceService
                 fileIdSet.Add(fileId);
 
                 // Resolve ProjectId
-                Guid resolvedProjectId = Guid.Empty;
+                Guid resolvedProjectId = projects.Count > 0 ? projects[0].Id : Guid.Empty;
                 if (fileDto.ProjectId.HasValue && projectIdSet.Contains(fileDto.ProjectId.Value))
                 {
                     resolvedProjectId = fileDto.ProjectId.Value;
@@ -87,10 +104,6 @@ public class AnalysisPersistenceService : IAnalysisPersistenceService
                 else if (!string.IsNullOrWhiteSpace(fileDto.ProjectPath) && projectPathMap.TryGetValue(fileDto.ProjectPath, out var matchedProjId))
                 {
                     resolvedProjectId = matchedProjId;
-                }
-                else if (projects.Count == 1)
-                {
-                    resolvedProjectId = projects[0].Id;
                 }
                 else if (projects.Count > 1)
                 {
@@ -100,7 +113,10 @@ public class AnalysisPersistenceService : IAnalysisPersistenceService
                         .OrderByDescending(kvp => kvp.Key.Length)
                         .FirstOrDefault();
 
-                    resolvedProjectId = matchedPrefixProj.Value != Guid.Empty ? matchedPrefixProj.Value : projects[0].Id;
+                    if (matchedPrefixProj.Value != Guid.Empty)
+                    {
+                        resolvedProjectId = matchedPrefixProj.Value;
+                    }
                 }
 
                 sourceFiles.Add(new SourceFile

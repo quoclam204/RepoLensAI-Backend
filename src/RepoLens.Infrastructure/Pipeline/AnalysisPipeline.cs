@@ -37,9 +37,9 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
         ITemporaryWorkspaceManager workspaceManager,
         IEnumerable<IRepositorySource> sources,
         IScannerService scannerService,
-        IRepositoryAnalyzer repositoryAnalyzer,
-        IAnalysisPersistenceService persistenceService,
-        IChunkEmbeddingService chunkEmbeddingService,
+        IRepositoryAnalyzer? repositoryAnalyzer,
+        IAnalysisPersistenceService? persistenceService,
+        IChunkEmbeddingService? chunkEmbeddingService,
         IOptions<AcquisitionOptions> acquisitionOptions,
         ILogger<AnalysisPipeline> logger)
     {
@@ -69,6 +69,9 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
             workspaceManager,
             sources,
             scannerService,
+            repositoryAnalyzer,
+            persistenceService,
+            chunkEmbeddingService,
             repositoryAnalyzer!,
             persistenceService!,
             chunkEmbeddingService!,
@@ -149,6 +152,15 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
             // -------------------------------------------------------------
             await UpdateAnalysisStageAsync(analysis, AnalysisStatus.Analyzing, AnalysisStage.StaticAnalysis, cancellationToken);
 
+            AnalysisResultModel analysisResult;
+            if (_repositoryAnalyzer != null)
+            {
+                analysisResult = await _repositoryAnalyzer.AnalyzeAsync(workspace.RootPath, analysisId, cancellationToken);
+            }
+            else
+            {
+                analysisResult = new AnalysisResultModel { AnalysisId = analysisId };
+            }
             var analysisResult = _repositoryAnalyzer != null
                 ? await _repositoryAnalyzer.AnalyzeAsync(workspace.RootPath, analysisId, cancellationToken)
                 : null;
@@ -156,6 +168,13 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
             // -------------------------------------------------------------
             // Stage 5: Document Chunk Embeddings
             // -------------------------------------------------------------
+            await UpdateAnalysisStageAsync(analysis, AnalysisStatus.Indexing, AnalysisStage.Embedding, cancellationToken);
+
+            var embeddedResult = analysisResult;
+            if (_chunkEmbeddingService != null)
+            {
+                var (populated, _) = await _chunkEmbeddingService.PopulateEmbeddingsAsync(analysisResult, cancellationToken);
+                embeddedResult = populated;
             if (_chunkEmbeddingService != null && analysisResult != null && analysisResult.DocumentChunks.Count > 0)
             {
                 try
@@ -175,6 +194,9 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
             // -------------------------------------------------------------
             await UpdateAnalysisStageAsync(analysis, AnalysisStatus.Indexing, AnalysisStage.Persistence, cancellationToken);
 
+            if (_persistenceService != null)
+            {
+                await _persistenceService.PersistAnalysisResultAsync(embeddedResult, cancellationToken);
             if (_persistenceService != null && analysisResult != null)
             {
                 analysisResult.NewStatus = AnalysisStatus.Completed;
@@ -195,6 +217,7 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
             await _dbContext.SaveChangesAsync(cancellationToken);
 
             _logger.LogInformation("Pipeline completed successfully for analysis {AnalysisId}.", analysisId);
+
             return AnalysisPipelineResult.Succeeded(AnalysisStage.Completed, scanResult);
         }
         catch (OperationCanceledException)
@@ -202,6 +225,8 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
             _logger.LogWarning("Pipeline execution was cancelled for analysis {AnalysisId}", analysisId);
             if (analysis != null)
             {
+                var stage = analysis.CurrentStage ?? AnalysisStage.Validation.ToString();
+                await MarkAnalysisFailedAsync(analysis, stage, "Operation was cancelled.", CancellationToken.None);
                 var failedStage = Enum.TryParse<AnalysisStage>(analysis.CurrentStage, out var stg) ? stg : AnalysisStage.Validation;
                 await MarkAnalysisFailedAsync(analysis, failedStage, "Operation was cancelled.", CancellationToken.None);
             }
@@ -210,12 +235,12 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unexpected failure during pipeline execution for analysis {AnalysisId}", analysisId);
-            var failedStage = AnalysisStage.Validation;
+            var stage = analysis?.CurrentStage ?? AnalysisStage.Validation.ToString();
             if (analysis != null)
             {
-                failedStage = Enum.TryParse<AnalysisStage>(analysis.CurrentStage, out var stg) ? stg : AnalysisStage.Validation;
-                await MarkAnalysisFailedAsync(analysis, failedStage, $"Pipeline execution failed: {ex.Message}", CancellationToken.None);
+                await MarkAnalysisFailedAsync(analysis, stage, $"Pipeline execution failed: {ex.Message}", CancellationToken.None);
             }
+            var failedStage = Enum.TryParse<AnalysisStage>(stage, out var parsed) ? parsed : AnalysisStage.Validation;
             return AnalysisPipelineResult.Failed(failedStage, ex.Message);
         }
         finally
@@ -238,17 +263,35 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
         await _dbContext.SaveChangesAsync(cancellationToken);
     }
 
-    private async Task MarkAnalysisFailedAsync(
+    private Task MarkAnalysisFailedAsync(
         AnalysisEntity analysis,
         AnalysisStage stage,
         string errorMessage,
         CancellationToken cancellationToken)
     {
-        analysis.Status = AnalysisStatus.Failed;
-        analysis.CurrentStage = stage.ToString();
-        analysis.Error = errorMessage;
-        analysis.CompletedAt = DateTimeOffset.UtcNow;
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        return MarkAnalysisFailedAsync(analysis, stage.ToString(), errorMessage, cancellationToken);
+    }
+
+    private async Task MarkAnalysisFailedAsync(
+        AnalysisEntity analysis,
+        string stage,
+        string errorMessage,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            _dbContext.ChangeTracker.Clear();
+            _dbContext.Analyses.Attach(analysis);
+            analysis.Status = AnalysisStatus.Failed;
+            analysis.CurrentStage = stage;
+            analysis.Error = errorMessage;
+            analysis.CompletedAt = DateTimeOffset.UtcNow;
+            await _dbContext.SaveChangesAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to persist Failed status for analysis {AnalysisId}", analysis.Id);
+        }
     }
 
     private async Task PersistScanResultsAsync(
@@ -304,6 +347,7 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
             }
             catch
             {
+                // Ignore fallback failure
                 // ignore secondary cleanup exception
             }
         }

@@ -15,6 +15,11 @@ public class RepoLensDbContext : DbContext
     {
     }
 
+    /// <summary>
+    /// Indicates whether PostgreSQL vector extension is installed and available in the target database.
+    /// </summary>
+    public static bool HasPgvectorExtension { get; set; } = false;
+
     public DbSet<Repository> Repositories => Set<Repository>();
     public DbSet<AnalysisEntity> Analyses => Set<AnalysisEntity>();
     public DbSet<Project> Projects => Set<Project>();
@@ -32,8 +37,11 @@ public class RepoLensDbContext : DbContext
     {
         base.OnModelCreating(modelBuilder);
 
-        // Register PostgreSQL vector extension for pgvector (T084)
-        modelBuilder.HasPostgresExtension("vector");
+        if (HasPgvectorExtension)
+        {
+            // Register PostgreSQL vector extension for pgvector (T084)
+            modelBuilder.HasPostgresExtension("vector");
+        }
 
         // Apply all entity type configurations defined in the Infrastructure assembly
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(RepoLensDbContext).Assembly);

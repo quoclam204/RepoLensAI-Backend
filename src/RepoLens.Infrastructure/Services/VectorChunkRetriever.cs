@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Pgvector;
 using RepoLens.Application.Abstractions;
 using RepoLens.Application.Models.RAG;
+using RepoLens.Domain.Entities;
 using RepoLens.Infrastructure.Common;
 using RepoLens.Infrastructure.Persistence;
 
@@ -64,21 +65,41 @@ public class VectorChunkRetriever : IVectorChunkRetriever
                 "Vector similarity retrieval requires a PostgreSQL database with the pgvector extension enabled.");
         }
 
-        // 3. PostgreSQL pgvector parameterized query execution
-        var pgVector = new Vector(queryEmbedding);
+        // 3. PostgreSQL vector retrieval execution
+        List<DocumentChunk> chunks;
+        if (RepoLensDbContext.HasPgvectorExtension)
+        {
+            var pgVector = new Vector(queryEmbedding);
 
-        var chunks = await _context.DocumentChunks
-            .FromSqlInterpolated($@"
-                SELECT *
-                FROM document_chunks
-                WHERE ""AnalysisId"" = {analysisId}
-                  AND ""Embedding"" IS NOT NULL
-                ORDER BY ""Embedding"" <=> {pgVector}
-                LIMIT {topK}")
-            .AsNoTracking()
-            .Include(c => c.SourceFile)
-            .Include(c => c.Evidence)
-            .ToListAsync(cancellationToken);
+            chunks = await _context.DocumentChunks
+                .FromSqlInterpolated($@"
+                    SELECT *
+                    FROM document_chunks
+                    WHERE ""AnalysisId"" = {analysisId}
+                      AND ""Embedding"" IS NOT NULL
+                    ORDER BY ""Embedding"" <=> {pgVector}
+                    LIMIT {topK}")
+                .AsNoTracking()
+                .Include(c => c.SourceFile)
+                .Include(c => c.Evidence)
+                .ToListAsync(cancellationToken);
+        }
+        else
+        {
+            // Fallback for PostgreSQL instances without compiled pgvector extension:
+            // Load embedded chunks strictly scoped to this AnalysisId and rank by cosine distance in memory.
+            var allChunks = await _context.DocumentChunks
+                .Where(c => c.AnalysisId == analysisId && c.Embedding != null)
+                .AsNoTracking()
+                .Include(c => c.SourceFile)
+                .Include(c => c.Evidence)
+                .ToListAsync(cancellationToken);
+
+            chunks = allChunks
+                .OrderBy(c => VectorMath.CosineDistance(queryEmbedding, c.Embedding!))
+                .Take(topK)
+                .ToList();
+        }
 
         // 4. Map to search results with cosine distance and similarity metrics
         var results = new List<VectorChunkSearchResult>(chunks.Count);
