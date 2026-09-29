@@ -13,6 +13,11 @@ public class SecretMaskingTests
     [InlineData("var token = \"Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\";")]
     [InlineData("private string password = \"P@ssw0rd2026!\";")]
     [InlineData("string client_secret = \"super_secret_client_credential\";")]
+    [InlineData("string awsKey = \"AKIAIOSFODNN7EXAMPLE\";")]
+    [InlineData("string ghToken = \"ghp_1234567890abcdefghijklmnopqrstuvwxyzAB\";")]
+    [InlineData("string access_token = \"my_secret_access_token_12345\";")]
+    [InlineData("string refresh_token = \"my_secret_refresh_token_67890\";")]
+    [InlineData("string conn = \"Server=myServer;SecretKey=super_secret_key;AccessKey=my_access_key;\";")]
     public void SecretMasker_MasksSensitiveCredentials(string inputSnippet)
     {
         // Act
@@ -24,7 +29,29 @@ public class SecretMaskingTests
         Assert.DoesNotContain("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9", sanitized);
         Assert.DoesNotContain("P@ssw0rd2026!", sanitized);
         Assert.DoesNotContain("super_secret_client_credential", sanitized);
+        Assert.DoesNotContain("AKIAIOSFODNN7EXAMPLE", sanitized);
+        Assert.DoesNotContain("ghp_1234567890abcdefghijklmnopqrstuvwxyzAB", sanitized);
+        Assert.DoesNotContain("my_secret_access_token_12345", sanitized);
+        Assert.DoesNotContain("my_secret_refresh_token_67890", sanitized);
+        Assert.DoesNotContain("super_secret_key", sanitized);
+        Assert.DoesNotContain("my_access_key", sanitized);
         Assert.Contains("***MASKED***", sanitized);
+    }
+
+    [Theory]
+    [InlineData("-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA0Y1+xyz\n-----END RSA PRIVATE KEY-----")]
+    [InlineData("-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmU\n-----END OPENSSH PRIVATE KEY-----")]
+    [InlineData("-----BEGIN EC PRIVATE KEY-----\nMHQCAQEEIB12345\n-----END EC PRIVATE KEY-----")]
+    public void SecretMasker_MasksPrivateKeyBlocks(string keySnippet)
+    {
+        // Act
+        var sanitized = SecretMasker.MaskSecrets(keySnippet);
+
+        // Assert
+        Assert.DoesNotContain("MIIEowIBAAKCAQEA0Y1+xyz", sanitized);
+        Assert.DoesNotContain("b3BlbnNzaC1rZXktdjEAAAAABG5vbmU", sanitized);
+        Assert.DoesNotContain("MHQCAQEEIB12345", sanitized);
+        Assert.Contains("***MASKED PRIVATE KEY***", sanitized);
     }
 
     [Fact]

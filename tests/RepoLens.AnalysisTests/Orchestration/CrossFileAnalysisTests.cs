@@ -143,4 +143,39 @@ public class CrossFileAnalysisTests
         // Malformed csproj was caught gracefully in Errors or handled without crash
         Assert.NotNull(result.Errors);
     }
+
+    [Fact]
+    public void Analyze_WithDuplicateImportsOrCalls_DeduplicatesRelationshipsDeterministically()
+    {
+        // Arrange: 2 web files importing the same module and making API call to same endpoint
+        var fileA = ("src/ComponentA.tsx", """
+            import React from "react";
+            import axios from "axios";
+            export function ComponentA() {
+                axios.get("/api/items");
+                return <div>A</div>;
+            }
+            """);
+
+        var fileB = ("src/ComponentB.tsx", """
+            import React from "react";
+            import axios from "axios";
+            export function ComponentB() {
+                axios.get("/api/items");
+                return <div>B</div>;
+            }
+            """);
+
+        var files = new[] { fileA, fileB };
+
+        // Act
+        var result = _analyzer.Analyze(files, []);
+
+        // Assert: relationships must contain no duplicate (SourceId -> Type -> TargetId)
+        var relKeys = result.Relationships.Select(r => $"{r.SourceId}->{r.Type}->{r.TargetId}").ToList();
+        Assert.Equal(relKeys.Distinct(StringComparer.OrdinalIgnoreCase).Count(), relKeys.Count);
+
+        // Target endpoint node exists
+        Assert.Contains(result.Nodes, n => n.Id == "endpoint:get:/api/items");
+    }
 }

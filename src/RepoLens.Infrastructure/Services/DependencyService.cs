@@ -18,6 +18,8 @@ public class DependencyService : IDependencyService
 
     public async Task<PagedResult<DependencyItemDto>> GetDependenciesAsync(Guid analysisId, DependencyFilterParams filter, CancellationToken ct = default)
     {
+        await AnalysisValidationHelper.EnsureAnalysisCompletedAsync(_context, analysisId, ct);
+
         var page = Math.Max(1, filter.Page);
         var pageSize = Math.Clamp(filter.PageSize, 1, 100);
 
@@ -80,6 +82,8 @@ public class DependencyService : IDependencyService
 
     public async Task<DependencyDetailResponse?> GetDependencyDetailAsync(Guid analysisId, Guid dependencyId, CancellationToken ct = default)
     {
+        await AnalysisValidationHelper.EnsureAnalysisCompletedAsync(_context, analysisId, ct);
+
         var dependency = await _context.Dependencies
             .AsNoTracking()
             .Include(d => d.Evidence)

@@ -14,11 +14,12 @@ public sealed record RepositoryAnalysisResult(
     AnalysisResult Analysis,
     IReadOnlyDictionary<string, int> NodeCountByType,
     IReadOnlyDictionary<string, int> RelationshipCountByType,
-    IReadOnlyList<string> AllErrors);
+    IReadOnlyList<string> AllErrors,
+    IReadOnlyDictionary<string, string>? FileContents = null);
 
 /// <summary>
 /// End-to-end repository analysis engine that executes filesystem scanning, project dependency discovery,
-/// Roslyn C# parsing, TypeScript/JavaScript analysis, and graph synthesis into a unified AnalysisResult.
+/// Roslyn C# parsing, TypeScript/JavaScript analysis, npm dependency extraction, and graph synthesis.
 /// </summary>
 public class RepositoryAnalysisEngine
 {
@@ -45,6 +46,7 @@ public class RepositoryAnalysisEngine
         var effectiveLimits = limits ?? AnalysisLimits.Default;
         var effectiveJobId = analysisJobId == Guid.Empty ? Guid.NewGuid() : analysisJobId;
         var allErrors = new List<string>();
+        var fileContentsMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         // 1. Scan filesystem safely
         var scanResult = _scanner.Scan(repositoryRootPath, effectiveLimits, cancellationToken);
@@ -60,6 +62,7 @@ public class RepositoryAnalysisEngine
                 {
                     var content = File.ReadAllText(proj.FullPath, Encoding.UTF8);
                     csprojList.Add((proj.RelativePath, content));
+                    fileContentsMap[proj.RelativePath] = content;
                 }
             }
             catch (Exception ex)
@@ -68,7 +71,45 @@ public class RepositoryAnalysisEngine
             }
         }
 
-        // 3. Read source code files
+        // 3. Read package.json manifests (T050)
+        var packageJsonList = new List<(string PackageJsonPath, string PackageJsonContent)>();
+        var seenPackageJsons = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var proj in scanResult.Projects.Where(p => p.ProjectType.Equals("Node", StringComparison.OrdinalIgnoreCase)))
+        {
+            try
+            {
+                if (File.Exists(proj.FullPath) && seenPackageJsons.Add(proj.RelativePath))
+                {
+                    var content = File.ReadAllText(proj.FullPath, Encoding.UTF8);
+                    packageJsonList.Add((proj.RelativePath, content));
+                    fileContentsMap[proj.RelativePath] = content;
+                }
+            }
+            catch (Exception ex)
+            {
+                allErrors.Add($"Failed reading package.json '{proj.RelativePath}': {ex.Message}");
+            }
+        }
+
+        foreach (var cfg in scanResult.ConfigurationFiles.Where(c => Path.GetFileName(c.RelativePath).Equals("package.json", StringComparison.OrdinalIgnoreCase)))
+        {
+            try
+            {
+                if (File.Exists(cfg.FullPath) && seenPackageJsons.Add(cfg.RelativePath))
+                {
+                    var content = File.ReadAllText(cfg.FullPath, Encoding.UTF8);
+                    packageJsonList.Add((cfg.RelativePath, content));
+                    fileContentsMap[cfg.RelativePath] = content;
+                }
+            }
+            catch (Exception ex)
+            {
+                allErrors.Add($"Failed reading package.json '{cfg.RelativePath}': {ex.Message}");
+            }
+        }
+
+        // 4. Read source code & documentation files
         var sourceFileList = new List<(string FilePath, string SourceText)>();
         foreach (var file in scanResult.SourceFiles)
         {
@@ -85,6 +126,7 @@ public class RepositoryAnalysisEngine
 
                     var content = File.ReadAllText(file.FullPath, Encoding.UTF8);
                     sourceFileList.Add((file.RelativePath, content));
+                    fileContentsMap[file.RelativePath] = content;
                 }
             }
             catch (Exception ex)
@@ -93,11 +135,11 @@ public class RepositoryAnalysisEngine
             }
         }
 
-        // 4. Run AST & Dependency Analysis
-        var analysis = _projectAnalyzer.Analyze(sourceFileList, csprojList, effectiveJobId);
+        // 5. Run AST & Dependency Analysis
+        var analysis = _projectAnalyzer.Analyze(sourceFileList, csprojList, packageJsonList, effectiveJobId);
         allErrors.AddRange(analysis.Errors);
 
-        // 5. Synthesize Top-Level Graph Nodes (Repository, Projects, and Structural Containers)
+        // 6. Synthesize Top-Level Graph Nodes (Repository, Projects, and Structural Containers)
         var graphBuilder = new KnowledgeGraphBuilder();
 
         // Add root repository node
@@ -154,12 +196,23 @@ public class RepositoryAnalysisEngine
         // Add all analyzed relationships
         foreach (var rel in analysis.Relationships)
         {
+            if (graphBuilder.Relationships.Count >= effectiveLimits.MaxRelationships)
+            {
+                allErrors.Add($"Maximum graph relationships limit reached ({effectiveLimits.MaxRelationships}). Capping further relationship extraction.");
+                break;
+            }
             graphBuilder.AddRelationship(rel);
         }
 
         // Add project-to-project dependencies from parsed .csproj references
         foreach (var projRef in analysis.ProjectReferences)
         {
+            if (graphBuilder.Relationships.Count >= effectiveLimits.MaxRelationships)
+            {
+                allErrors.Add($"Maximum graph relationships limit reached ({effectiveLimits.MaxRelationships}). Capping further relationship extraction.");
+                break;
+            }
+
             var sourceProjName = scanResult.Projects
                 .FirstOrDefault(p => projRef.Location.FilePath.Contains(p.ProjectName, StringComparison.OrdinalIgnoreCase))?.ProjectName;
 
@@ -196,7 +249,55 @@ public class RepositoryAnalysisEngine
             }
         }
 
-        // 6. Compute Metrics
+        // Add package dependency relationships (npm and NuGet)
+        foreach (var pkgRef in analysis.PackageReferences)
+        {
+            if (graphBuilder.Relationships.Count >= effectiveLimits.MaxRelationships)
+            {
+                allErrors.Add($"Maximum graph relationships limit reached ({effectiveLimits.MaxRelationships}). Capping further relationship extraction.");
+                break;
+            }
+
+            var sourceProj = scanResult.Projects
+                .FirstOrDefault(p => pkgRef.Location.FilePath.StartsWith(Path.GetDirectoryName(p.RelativePath) ?? "", StringComparison.OrdinalIgnoreCase));
+
+            if (sourceProj is not null)
+            {
+                var sourceId = $"project:{sourceProj.ProjectName}";
+                var targetPkgId = $"package:{pkgRef.PackageName}";
+
+                if (!graphBuilder.TryGetNode(targetPkgId, out _))
+                {
+                    graphBuilder.AddNode(KnowledgeNode.Create(
+                        id: targetPkgId,
+                        name: pkgRef.PackageName,
+                        type: KnowledgeNodeType.Service,
+                        filePath: pkgRef.Location.FilePath,
+                        properties: new Dictionary<string, string>
+                        {
+                            ["Version"] = pkgRef.Version ?? ""
+                        }));
+                }
+
+                var evidence = EvidenceFactory.Create(
+                    effectiveJobId,
+                    pkgRef.Location.FilePath,
+                    pkgRef.Location.StartLine,
+                    pkgRef.Location.EndLine,
+                    pkgRef.Snippet,
+                    EvidenceType.Dependency,
+                    ConfidenceScore.High,
+                    pkgRef.PackageName);
+
+                graphBuilder.AddRelationship(KnowledgeRelationship.Create(
+                    sourceId: sourceId,
+                    targetId: targetPkgId,
+                    type: KnowledgeRelationshipType.DependsOn,
+                    evidence: evidence));
+            }
+        }
+
+        // 7. Compute Metrics
         var allNodes = graphBuilder.Nodes;
         var allRelationships = graphBuilder.Relationships;
 
@@ -221,7 +322,8 @@ public class RepositoryAnalysisEngine
             Analysis: finalAnalysis,
             NodeCountByType: nodeCountByType,
             RelationshipCountByType: relCountByType,
-            AllErrors: allErrors.AsReadOnly());
+            AllErrors: allErrors.AsReadOnly(),
+            FileContents: fileContentsMap);
     }
 
     /// <summary>

@@ -20,4 +20,9 @@ public interface IArchifyAdapter
     /// components, relationships, and evidence IDs.
     /// </summary>
     ArchifyDocument ConvertFromAnalysis(AnalysisResultModel analysisResult);
+
+    /// <summary>
+    /// Converts an ArchitectureResponse DTO into an Archify C4 document for frontend consumption.
+    /// </summary>
+    ArchifyDocument ConvertFromArchitectureResponse(RepoLens.Application.DTOs.Architecture.ArchitectureResponse architectureResponse);
 }

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using RepoLens.Application.Abstractions;
 using RepoLens.Application.Common;
@@ -7,6 +8,7 @@ using RepoLens.Application.DTOs.Overview;
 using RepoLens.Domain.Entities;
 using RepoLens.Domain.Enums;
 using RepoLens.Infrastructure.Persistence;
+using RepoLens.Infrastructure.Storage;
 using AnalysisEntity = RepoLens.Domain.Entities.Analysis;
 
 namespace RepoLens.Infrastructure.Services;
@@ -14,11 +16,19 @@ namespace RepoLens.Infrastructure.Services;
 public class AnalysisService : IAnalysisService
 {
     private readonly RepoLensDbContext _context;
+    private readonly IAnalysisQueue _analysisQueue;
+    private readonly WorkspaceOptions _workspaceOptions;
     private readonly ILogger<AnalysisService> _logger;
 
-    public AnalysisService(RepoLensDbContext context, ILogger<AnalysisService> logger)
+    public AnalysisService(
+        RepoLensDbContext context,
+        IAnalysisQueue analysisQueue,
+        Microsoft.Extensions.Options.IOptions<WorkspaceOptions> workspaceOptions,
+        ILogger<AnalysisService> logger)
     {
         _context = context;
+        _analysisQueue = analysisQueue ?? throw new ArgumentNullException(nameof(analysisQueue));
+        _workspaceOptions = workspaceOptions?.Value ?? new WorkspaceOptions();
         _logger = logger;
     }
 
@@ -59,6 +69,10 @@ public class AnalysisService : IAnalysisService
         await _context.SaveChangesAsync(ct);
 
         _logger.LogInformation("Analysis {AnalysisId} created successfully for repository {RepositoryId}", analysis.Id, repository.Id);
+
+        // Enqueue background analysis job to bounded worker queue (T054)
+        var sourceReq = new RepositorySourceRequest(RepositorySourceType.GitUrl, Url: request.SourceUrl);
+        await _analysisQueue.EnqueueAsync(new AnalysisWorkItem(analysis.Id, sourceReq), ct);
 
         return new CreateAnalysisResponse(
             analysis.Id,
@@ -103,6 +117,25 @@ public class AnalysisService : IAnalysisService
         await _context.SaveChangesAsync(ct);
 
         _logger.LogInformation("Analysis {AnalysisId} created successfully for ZIP upload {FileName}", analysis.Id, fileName);
+
+        // Stage uploaded archive to disk to avoid unbounded memory buffering in RAM (T054 / T094)
+        var stagingDir = !string.IsNullOrWhiteSpace(_workspaceOptions.BaseDirectory)
+            ? _workspaceOptions.BaseDirectory
+            : Path.Combine(Path.GetTempPath(), "repolens-workspaces");
+        Directory.CreateDirectory(stagingDir);
+
+        var stagingFilePath = Path.Combine(stagingDir, $"staged_{analysis.Id:N}_{Path.GetFileName(fileName)}");
+        await using (var fileStream = new FileStream(stagingFilePath, FileMode.Create, FileAccess.Write, FileShare.None, 8192, useAsync: true))
+        {
+            await contentStream.CopyToAsync(fileStream, ct);
+        }
+
+        var zipRequest = new RepositorySourceRequest(
+            RepositorySourceType.ZipUpload,
+            FileName: fileName);
+
+        // Enqueue job with staged archive path; worker cleans up stagingFilePath upon completion
+        await _analysisQueue.EnqueueAsync(new AnalysisWorkItem(analysis.Id, zipRequest, TempArchiveFilePath: stagingFilePath), ct);
 
         return new CreateAnalysisResponse(
             analysis.Id,
