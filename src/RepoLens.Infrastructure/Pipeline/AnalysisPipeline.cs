@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using RepoLens.Application.Abstractions;
 using RepoLens.Application.Abstractions.AI;
+using RepoLens.Application.DTOs.Persistence;
 using RepoLens.Application.Models.Pipeline;
 using RepoLens.Domain.Entities;
 using RepoLens.Domain.Enums;
@@ -16,6 +17,7 @@ namespace RepoLens.Infrastructure.Pipeline;
 /// Pipeline orchestrator and lifecycle coordinator (T052 - T054, FR-002, FR-003).
 /// Coordinates repository acquisition, security validation, workspace management,
 /// static analysis, chunk embeddings, persistence, and analysis stage transitions.
+/// scanning, static analysis, embedding, persistence, and lifecycle transitions.
 /// </summary>
 public sealed class AnalysisPipeline : IAnalysisPipeline
 {
@@ -28,6 +30,9 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
     private readonly IChunkEmbeddingService _chunkEmbeddingService;
     private readonly AcquisitionOptions _acquisitionOptions;
     private readonly ILogger<AnalysisPipeline> _logger;
+    private readonly IRepositoryAnalyzer? _repositoryAnalyzer;
+    private readonly IAnalysisPersistenceService? _persistenceService;
+    private readonly IChunkEmbeddingService? _chunkEmbeddingService;
 
     public AnalysisPipeline(
         RepoLensDbContext dbContext,
@@ -38,7 +43,10 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
         IAnalysisPersistenceService persistenceService,
         IChunkEmbeddingService chunkEmbeddingService,
         IOptions<AcquisitionOptions> acquisitionOptions,
-        ILogger<AnalysisPipeline> logger)
+        ILogger<AnalysisPipeline> logger,
+        IRepositoryAnalyzer? repositoryAnalyzer = null,
+        IAnalysisPersistenceService? persistenceService = null,
+        IChunkEmbeddingService? chunkEmbeddingService = null)
     {
         _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
         _workspaceManager = workspaceManager ?? throw new ArgumentNullException(nameof(workspaceManager));
@@ -49,6 +57,9 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
         _chunkEmbeddingService = chunkEmbeddingService ?? throw new ArgumentNullException(nameof(chunkEmbeddingService));
         _acquisitionOptions = acquisitionOptions?.Value ?? new AcquisitionOptions();
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _repositoryAnalyzer = repositoryAnalyzer;
+        _persistenceService = persistenceService;
+        _chunkEmbeddingService = chunkEmbeddingService;
     }
 
     /// <inheritdoc />
@@ -104,7 +115,6 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
             {
                 var error = acquisitionResult.ErrorMessage ?? "Repository acquisition failed.";
                 await MarkAnalysisFailedAsync(analysis, AnalysisStage.RepositoryAcquisition, error, cancellationToken);
-                await CleanupWorkspaceSafeAsync(workspace);
                 return AnalysisPipelineResult.Failed(AnalysisStage.RepositoryAcquisition, error);
             }
 
@@ -150,6 +160,60 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
 
             _logger.LogInformation("Pipeline completed successfully for analysis {AnalysisId}.", analysisId);
 
+            // Stage 4: Static Analysis (Roslyn AST & Knowledge Graph)
+            // -------------------------------------------------------------
+            if (_repositoryAnalyzer != null)
+            {
+                await UpdateAnalysisStageAsync(analysis, AnalysisStatus.Running, AnalysisStage.StaticAnalysis, cancellationToken);
+                var analysisResultModel = await _repositoryAnalyzer.AnalyzeAsync(workspace.RootPath, analysisId, cancellationToken);
+
+                // -------------------------------------------------------------
+                // Stage 5: Document Chunk Embedding (if available)
+                // -------------------------------------------------------------
+                if (_chunkEmbeddingService != null && analysisResultModel.DocumentChunks.Count > 0)
+                {
+                    try
+                    {
+                        await UpdateAnalysisStageAsync(analysis, AnalysisStatus.Running, AnalysisStage.Embedding, cancellationToken);
+                        var (embeddedResult, _) = await _chunkEmbeddingService.PopulateEmbeddingsAsync(analysisResultModel, cancellationToken);
+                        analysisResultModel = embeddedResult;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Document chunk embedding failed or was skipped for analysis {AnalysisId}. Proceeding with persistence.", analysisId);
+                    }
+                }
+
+                // -------------------------------------------------------------
+                // Stage 6: Persistence & Completion
+                // -------------------------------------------------------------
+                if (_persistenceService != null)
+                {
+                    await UpdateAnalysisStageAsync(analysis, AnalysisStatus.Running, AnalysisStage.Persistence, cancellationToken);
+                    analysisResultModel.NewStatus = AnalysisStatus.Completed;
+                    analysisResultModel.CurrentStage = AnalysisStage.Completed.ToString();
+                    await _persistenceService.PersistAnalysisResultAsync(analysisResultModel, cancellationToken);
+                }
+                else
+                {
+                    await PersistScanResultsAsync(analysis, scanResult, cancellationToken);
+                    analysis.Status = AnalysisStatus.Completed;
+                    analysis.CurrentStage = AnalysisStage.Completed.ToString();
+                    analysis.CompletedAt = DateTimeOffset.UtcNow;
+                    await _dbContext.SaveChangesAsync(cancellationToken);
+                }
+            }
+            else
+            {
+                // Fallback when no static analyzer is registered: persist basic scan results
+                await PersistScanResultsAsync(analysis, scanResult, cancellationToken);
+                analysis.Status = AnalysisStatus.Completed;
+                analysis.CurrentStage = AnalysisStage.Completed.ToString();
+                analysis.CompletedAt = DateTimeOffset.UtcNow;
+                await _dbContext.SaveChangesAsync(cancellationToken);
+            }
+
+            _logger.LogInformation("Pipeline execution completed successfully for analysis {AnalysisId}", analysisId);
             return AnalysisPipelineResult.Succeeded(AnalysisStage.Completed, scanResult);
         }
         catch (OperationCanceledException)
@@ -158,17 +222,22 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
             if (analysis != null)
             {
                 await MarkAnalysisFailedAsync(analysis, AnalysisStage.Validation, "Operation was cancelled.", CancellationToken.None);
+                var failedStage = Enum.TryParse<AnalysisStage>(analysis.CurrentStage, out var stg) ? stg : AnalysisStage.Validation;
+                await MarkAnalysisFailedAsync(analysis, failedStage, "Operation was cancelled.", CancellationToken.None);
             }
             throw;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unexpected failure during pipeline execution for analysis {AnalysisId}", analysisId);
+            var failedStage = AnalysisStage.Validation;
             if (analysis != null)
             {
-                await MarkAnalysisFailedAsync(analysis, AnalysisStage.Validation, $"Pipeline execution failed: {ex.Message}", CancellationToken.None);
+                failedStage = Enum.TryParse<AnalysisStage>(analysis.CurrentStage, out var stg) ? stg : AnalysisStage.Validation;
+                await MarkAnalysisFailedAsync(analysis, failedStage, $"Pipeline execution failed: {ex.Message}", CancellationToken.None);
             }
             return AnalysisPipelineResult.Failed(AnalysisStage.Validation, ex.Message);
+            return AnalysisPipelineResult.Failed(failedStage, ex.Message);
         }
         finally
         {

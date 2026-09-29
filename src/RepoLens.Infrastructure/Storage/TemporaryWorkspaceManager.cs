@@ -41,7 +41,7 @@ public sealed class TemporaryWorkspaceManager : ITemporaryWorkspaceManager
     }
 
     /// <inheritdoc />
-    public Task<ITemporaryWorkspace> CreateWorkspaceAsync(
+    public async Task<ITemporaryWorkspace> CreateWorkspaceAsync(
         Guid analysisId,
         CancellationToken cancellationToken = default)
     {
@@ -59,7 +59,7 @@ public sealed class TemporaryWorkspaceManager : ITemporaryWorkspaceManager
                 analysisId);
             // Clean up stale workspace from a previous failed run
             var staleWorkspace = new TemporaryWorkspace(analysisId, workspacePath, _workspaceLogger);
-            staleWorkspace.CleanupAsync().GetAwaiter().GetResult();
+            await staleWorkspace.CleanupAsync();
         }
 
         Directory.CreateDirectory(workspacePath);
@@ -71,7 +71,7 @@ public sealed class TemporaryWorkspaceManager : ITemporaryWorkspaceManager
             "Created workspace for analysis {AnalysisId} at {Path}",
             analysisId, workspacePath);
 
-        return Task.FromResult<ITemporaryWorkspace>(workspace);
+        return workspace;
     }
 
     /// <inheritdoc />
@@ -138,7 +138,8 @@ public sealed class TemporaryWorkspaceManager : ITemporaryWorkspaceManager
         var fullResolvedPath = Path.GetFullPath(resolvedPath);
         var fullBasePath = Path.GetFullPath(_baseDirectory);
 
-        if (!fullResolvedPath.StartsWith(fullBasePath, StringComparison.OrdinalIgnoreCase))
+        var relative = Path.GetRelativePath(fullBasePath, fullResolvedPath);
+        if (relative.StartsWith("..", StringComparison.Ordinal) || Path.IsPathRooted(relative))
         {
             throw new InvalidOperationException(
                 $"Workspace path '{resolvedPath}' escapes the base directory '{_baseDirectory}'. " +
