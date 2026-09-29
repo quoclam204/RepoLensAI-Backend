@@ -92,4 +92,39 @@ public class ArchifyAdapterTests
         Assert.Equal("confirmed", rel.Confidence);
         Assert.Contains("ev:csproj:10-12", rel.EvidenceIds);
     }
+
+    [Fact]
+    public void ConvertFromArchitectureResponse_PreservesContainersAndEvidence()
+    {
+        // Arrange
+        var response = new RepoLens.Application.DTOs.Architecture.ArchitectureResponse(
+            AnalysisId: Guid.NewGuid(),
+            Nodes:
+            [
+                new("proj:repolens-api", "Project", "RepoLens.Api", "src/RepoLens.Api"),
+                new("cls:analysiscontroller", "Class", "AnalysisController", "src/RepoLens.Api/Controllers/AnalysisController.cs")
+            ],
+            Edges:
+            [
+                new("edge-1", "repolens-api", "repolens-domain", "References", "confirmed",
+                    new RepoLens.Application.DTOs.Architecture.EvidenceSnippetDto("src/RepoLens.Api/RepoLens.Api.csproj", 10, 15),
+                    "ev:10-15")
+            ]);
+
+        var adapter = new ArchifyAdapter();
+
+        // Act
+        var doc = adapter.ConvertFromArchitectureResponse(response);
+
+        // Assert
+        Assert.NotNull(doc);
+        Assert.Single(doc.System.Containers);
+        Assert.Equal("RepoLens.Api", doc.System.Containers[0].Name);
+        Assert.Single(doc.System.Containers[0].Components);
+        Assert.Equal("AnalysisController", doc.System.Containers[0].Components[0].Name);
+
+        Assert.Single(doc.System.Relationships);
+        Assert.Equal("References", doc.System.Relationships[0].Type);
+        Assert.Contains("ev:10-15", doc.System.Relationships[0].EvidenceIds);
+    }
 }

@@ -104,20 +104,11 @@ public sealed class ZipRepositorySource : IRepositorySource
                     continue;
                 }
 
-                // Verify single file uncompressed size limit
+                // Verify single file uncompressed size limit from header
                 if (entry.Length > _options.MaxSingleFileBytes)
                 {
                     var msg = $"ZIP entry '{entry.FullName}' exceeds maximum single file size limit ({entry.Length} bytes > {_options.MaxSingleFileBytes} bytes).";
                     _logger.LogWarning(msg);
-                    return RepositoryAcquisitionResult.Failure(msg);
-                }
-
-                // Verify total cumulative uncompressed size (Zip Bomb defense)
-                totalUncompressedBytes += entry.Length;
-                if (totalUncompressedBytes > _options.MaxUncompressedBytes)
-                {
-                    var msg = $"ZIP archive uncompressed size exceeds maximum allowed limit of {_options.MaxUncompressedBytes / (1024 * 1024)} MB (Zip bomb defense triggered).";
-                    _logger.LogError(msg);
                     return RepositoryAcquisitionResult.Failure(msg);
                 }
 
@@ -128,11 +119,33 @@ public sealed class ZipRepositorySource : IRepositorySource
                     Directory.CreateDirectory(parentDir);
                 }
 
-                // Extract file content safely with buffer streaming
+                // Extract file content safely with buffer streaming and real-time decompression size monitoring
+                long entryWritten = 0;
+                var buffer = new byte[8192];
                 await using (var entryStream = entry.Open())
                 await using (var fileStream = new FileStream(destinationPath, FileMode.Create, FileAccess.Write, FileShare.None, 8192, useAsync: true))
                 {
-                    await entryStream.CopyToAsync(fileStream, cancellationToken);
+                    int bytesRead;
+                    while ((bytesRead = await entryStream.ReadAsync(buffer, 0, buffer.Length, cancellationToken)) > 0)
+                    {
+                        entryWritten += bytesRead;
+                        if (entryWritten > _options.MaxSingleFileBytes)
+                        {
+                            var msg = $"ZIP entry '{entry.FullName}' exceeded maximum single file size limit during decompression ({entryWritten} bytes > {_options.MaxSingleFileBytes} bytes).";
+                            _logger.LogWarning(msg);
+                            return RepositoryAcquisitionResult.Failure(msg);
+                        }
+
+                        totalUncompressedBytes += bytesRead;
+                        if (totalUncompressedBytes > _options.MaxUncompressedBytes)
+                        {
+                            var msg = $"ZIP archive uncompressed size exceeded maximum allowed limit of {_options.MaxUncompressedBytes / (1024 * 1024)} MB during decompression (Zip bomb defense triggered).";
+                            _logger.LogError(msg);
+                            return RepositoryAcquisitionResult.Failure(msg);
+                        }
+
+                        await fileStream.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
+                    }
                 }
 
                 extractedFileCount++;

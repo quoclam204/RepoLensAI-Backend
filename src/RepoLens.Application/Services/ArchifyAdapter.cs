@@ -158,6 +158,78 @@ public class ArchifyAdapter : IArchifyAdapter
         return new ArchifyDocument(system);
     }
 
+    public ArchifyDocument ConvertFromArchitectureResponse(DTOs.Architecture.ArchitectureResponse architectureResponse)
+    {
+        ArgumentNullException.ThrowIfNull(architectureResponse);
+
+        var containers = new List<ArchifyContainer>();
+        var containerNodes = architectureResponse.Nodes
+            .Where(n => string.Equals(n.Type, "Project", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(n.Type, "Container", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (containerNodes.Count == 0)
+        {
+            containerNodes.Add(new DTOs.Architecture.ArchitectureNodeDto(
+                Id: "default-container",
+                Type: "Container",
+                Name: "MainApplication",
+                Path: ""));
+        }
+
+        foreach (var cNode in containerNodes)
+        {
+            var containerId = Slugify(cNode.Name);
+            var compNodes = architectureResponse.Nodes
+                .Where(n => !string.Equals(n.Type, "Project", StringComparison.OrdinalIgnoreCase) &&
+                            !string.Equals(n.Type, "Container", StringComparison.OrdinalIgnoreCase) &&
+                            (string.IsNullOrEmpty(cNode.Path) ||
+                             n.Path.StartsWith(cNode.Path, StringComparison.OrdinalIgnoreCase) ||
+                             n.Path.Contains(cNode.Name, StringComparison.OrdinalIgnoreCase)))
+                .ToList();
+
+            var components = compNodes.Select(cn => new ArchifyComponent(
+                Id: Slugify(cn.Name),
+                Name: cn.Name,
+                EvidenceIds: Array.Empty<string>())).ToList();
+
+            containers.Add(new ArchifyContainer(
+                Id: containerId,
+                Name: cNode.Name,
+                Type: InferContainerType(cNode.Name, cNode.Type),
+                Technology: ".NET 10 / C#",
+                Components: components.AsReadOnly()));
+        }
+
+        var relationships = architectureResponse.Edges.Select(e =>
+        {
+            var evidenceIds = new List<string>();
+            if (!string.IsNullOrWhiteSpace(e.EvidenceId))
+            {
+                evidenceIds.Add(e.EvidenceId);
+            }
+            else if (e.Evidence != null)
+            {
+                evidenceIds.Add($"ev:{e.Evidence.File}:{e.Evidence.StartLine}-{e.Evidence.EndLine}");
+            }
+
+            return new ArchifyRelationship(
+                SourceId: Slugify(e.Source),
+                TargetId: Slugify(e.Target),
+                Type: e.Type,
+                EvidenceIds: evidenceIds.AsReadOnly(),
+                Confidence: string.IsNullOrWhiteSpace(e.Confidence) ? "confirmed" : e.Confidence);
+        }).ToList();
+
+        var system = new ArchifySystem(
+            Name: "RepoLensAnalysisSystem",
+            Description: $"Evidence-grounded architectural representation for analysis {architectureResponse.AnalysisId}",
+            Containers: containers.AsReadOnly(),
+            Relationships: relationships.AsReadOnly());
+
+        return new ArchifyDocument(system);
+    }
+
     private static string InferContainerType(string projectName, string projectType)
     {
         if (projectName.EndsWith(".Api", StringComparison.OrdinalIgnoreCase) ||

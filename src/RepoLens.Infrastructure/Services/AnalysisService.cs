@@ -8,6 +8,7 @@ using RepoLens.Application.DTOs.Overview;
 using RepoLens.Domain.Entities;
 using RepoLens.Domain.Enums;
 using RepoLens.Infrastructure.Persistence;
+using RepoLens.Infrastructure.Storage;
 using AnalysisEntity = RepoLens.Domain.Entities.Analysis;
 
 namespace RepoLens.Infrastructure.Services;
@@ -15,16 +16,19 @@ namespace RepoLens.Infrastructure.Services;
 public class AnalysisService : IAnalysisService
 {
     private readonly RepoLensDbContext _context;
-    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly IAnalysisQueue _analysisQueue;
+    private readonly WorkspaceOptions _workspaceOptions;
     private readonly ILogger<AnalysisService> _logger;
 
     public AnalysisService(
         RepoLensDbContext context,
-        IServiceScopeFactory scopeFactory,
+        IAnalysisQueue analysisQueue,
+        Microsoft.Extensions.Options.IOptions<WorkspaceOptions> workspaceOptions,
         ILogger<AnalysisService> logger)
     {
         _context = context;
-        _scopeFactory = scopeFactory;
+        _analysisQueue = analysisQueue ?? throw new ArgumentNullException(nameof(analysisQueue));
+        _workspaceOptions = workspaceOptions?.Value ?? new WorkspaceOptions();
         _logger = logger;
     }
 
@@ -66,23 +70,9 @@ public class AnalysisService : IAnalysisService
 
         _logger.LogInformation("Analysis {AnalysisId} created successfully for repository {RepositoryId}", analysis.Id, repository.Id);
 
-        // Trigger background analysis pipeline execution (T052 - T054)
-        var analysisId = analysis.Id;
-        var sourceUrl = request.SourceUrl;
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                using var scope = _scopeFactory.CreateScope();
-                var pipeline = scope.ServiceProvider.GetRequiredService<IAnalysisPipeline>();
-                var sourceReq = new RepositorySourceRequest(RepositorySourceType.GitUrl, Url: sourceUrl);
-                await pipeline.ExecuteAsync(analysisId, sourceReq);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Background pipeline execution failed for Git analysis {AnalysisId}", analysisId);
-            }
-        });
+        // Enqueue background analysis job to bounded worker queue (T054)
+        var sourceReq = new RepositorySourceRequest(RepositorySourceType.GitUrl, Url: request.SourceUrl);
+        await _analysisQueue.EnqueueAsync(new AnalysisWorkItem(analysis.Id, sourceReq), ct);
 
         return new CreateAnalysisResponse(
             analysis.Id,
@@ -128,33 +118,24 @@ public class AnalysisService : IAnalysisService
 
         _logger.LogInformation("Analysis {AnalysisId} created successfully for ZIP upload {FileName}", analysis.Id, fileName);
 
-        // Buffer uploaded stream into memory so background pipeline can process it after HTTP request ends
-        var memStream = new MemoryStream();
-        await contentStream.CopyToAsync(memStream, ct);
-        memStream.Position = 0;
+        // Stage uploaded archive to disk to avoid unbounded memory buffering in RAM (T054 / T094)
+        var stagingDir = !string.IsNullOrWhiteSpace(_workspaceOptions.BaseDirectory)
+            ? _workspaceOptions.BaseDirectory
+            : Path.Combine(Path.GetTempPath(), "repolens-workspaces");
+        Directory.CreateDirectory(stagingDir);
 
-        var analysisId = analysis.Id;
-        _ = Task.Run(async () =>
+        var stagingFilePath = Path.Combine(stagingDir, $"staged_{analysis.Id:N}_{Path.GetFileName(fileName)}");
+        await using (var fileStream = new FileStream(stagingFilePath, FileMode.Create, FileAccess.Write, FileShare.None, 8192, useAsync: true))
         {
-            try
-            {
-                using var scope = _scopeFactory.CreateScope();
-                var pipeline = scope.ServiceProvider.GetRequiredService<IAnalysisPipeline>();
-                using (memStream)
-                {
-                    var sourceReq = new RepositorySourceRequest(
-                        RepositorySourceType.ZipUpload,
-                        ContentStream: memStream,
-                        FileName: fileName,
-                        ContentLength: memStream.Length);
-                    await pipeline.ExecuteAsync(analysisId, sourceReq);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Background pipeline execution failed for ZIP analysis {AnalysisId}", analysisId);
-            }
-        });
+            await contentStream.CopyToAsync(fileStream, ct);
+        }
+
+        var zipRequest = new RepositorySourceRequest(
+            RepositorySourceType.ZipUpload,
+            FileName: fileName);
+
+        // Enqueue job with staged archive path; worker cleans up stagingFilePath upon completion
+        await _analysisQueue.EnqueueAsync(new AnalysisWorkItem(analysis.Id, zipRequest, TempArchiveFilePath: stagingFilePath), ct);
 
         return new CreateAnalysisResponse(
             analysis.Id,

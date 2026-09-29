@@ -43,7 +43,9 @@ public static class DependencyInjection
         services.AddSingleton<RepoLens.Infrastructure.Scanning.ProjectDetector>();
         services.AddScoped<RepoLens.Application.Abstractions.IScannerService, RepoLens.Infrastructure.Scanning.FileScanner>();
 
-        // Register Person 1: Pipeline Orchestrator (T052 - T054)
+        // Register Pipeline Orchestration & Background Worker (T052 - T054)
+        services.AddSingleton<RepoLens.Application.Abstractions.IAnalysisQueue, RepoLens.Infrastructure.Background.ChannelAnalysisQueue>();
+        services.AddHostedService<RepoLens.Infrastructure.Background.AnalysisBackgroundWorker>();
         services.AddScoped<RepoLens.Application.Abstractions.IAnalysisPipeline, RepoLens.Infrastructure.Pipeline.AnalysisPipeline>();
 
         // Register Query and Command Services (T060 - T069)
@@ -71,6 +73,37 @@ public static class DependencyInjection
         services.AddScoped<RepoLens.Application.Abstractions.AI.IAiEvidenceValidator, RepoLens.Application.Services.AiEvidenceValidator>();
         // T089: AI confidence evaluation service
         services.AddScoped<RepoLens.Application.Abstractions.AI.IAiConfidenceCalculator, RepoLens.Application.Services.AiConfidenceCalculator>();
+
+        // T081 & T082: AI & Embedding Providers and Options
+        services.AddSingleton<HttpClient>();
+        services.Configure<RepoLens.Infrastructure.Ai.AiOptions>(configuration.GetSection(RepoLens.Infrastructure.Ai.AiOptions.SectionName));
+        services.Configure<RepoLens.Infrastructure.Ai.EmbeddingOptions>(configuration.GetSection(RepoLens.Infrastructure.Ai.EmbeddingOptions.SectionName));
+
+        services.AddScoped<RepoLens.Application.Abstractions.AI.IEmbeddingProvider>(sp =>
+        {
+            var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<RepoLens.Infrastructure.Ai.EmbeddingOptions>>().Value;
+            if (string.Equals(options.Provider, "OpenAi", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(options.ApiKey))
+            {
+                return ActivatorUtilities.CreateInstance<RepoLens.Infrastructure.Ai.OpenAiEmbeddingProvider>(sp);
+            }
+            return ActivatorUtilities.CreateInstance<RepoLens.Infrastructure.Ai.DeterministicEmbeddingProvider>(sp);
+        });
+
+        services.AddScoped<RepoLens.Application.Abstractions.AI.IAiProvider>(sp =>
+        {
+            var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<RepoLens.Infrastructure.Ai.AiOptions>>().Value;
+            if (string.Equals(options.Provider, "OpenAi", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(options.ApiKey))
+            {
+                return ActivatorUtilities.CreateInstance<RepoLens.Infrastructure.Ai.OpenAiProvider>(sp);
+            }
+            return ActivatorUtilities.CreateInstance<RepoLens.Infrastructure.Ai.DeterministicAiProvider>(sp);
+        });
+
+        // T111: MemoryCache for safe query caching
+        services.AddMemoryCache();
+
+        // T112: Observability & Metrics
+        services.AddSingleton<RepoLens.Application.Abstractions.IAnalysisMetrics, RepoLens.Infrastructure.Observability.AnalysisMetrics>();
 
         return services;
     }
