@@ -9,6 +9,7 @@ using RepoLens.Domain.Entities;
 using RepoLens.Domain.Enums;
 using RepoLens.Infrastructure.Acquisition;
 using RepoLens.Infrastructure.Persistence;
+using AnalysisEntity = RepoLens.Domain.Entities.Analysis;
 
 namespace RepoLens.Infrastructure.Pipeline;
 
@@ -75,7 +76,7 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
             // -------------------------------------------------------------
             // Stage 1: Validation
             // -------------------------------------------------------------
-            await UpdateAnalysisStageAsync(analysis, AnalysisStatus.Running, AnalysisStage.Validation, cancellationToken);
+            await UpdateAnalysisStageAsync(analysis, AnalysisStatus.Created, AnalysisStage.Validation, cancellationToken);
 
             var (isValid, validationError) = RepositoryValidator.Validate(request, _acquisitionOptions);
             if (!isValid)
@@ -87,7 +88,7 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
             // -------------------------------------------------------------
             // Stage 2: Repository Acquisition
             // -------------------------------------------------------------
-            await UpdateAnalysisStageAsync(analysis, AnalysisStatus.Running, AnalysisStage.RepositoryAcquisition, cancellationToken);
+            await UpdateAnalysisStageAsync(analysis, AnalysisStatus.Cloning, AnalysisStage.RepositoryAcquisition, cancellationToken);
 
             var sourceHandler = _sources.FirstOrDefault(s => s.CanHandle(request));
             if (sourceHandler == null)
@@ -110,7 +111,7 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
             // -------------------------------------------------------------
             // Stage 3: File Scanning & Language / Project Detection
             // -------------------------------------------------------------
-            await UpdateAnalysisStageAsync(analysis, AnalysisStatus.Running, AnalysisStage.FileScanning, cancellationToken);
+            await UpdateAnalysisStageAsync(analysis, AnalysisStatus.Scanning, AnalysisStage.FileScanning, cancellationToken);
 
             var scanResult = await _scannerService.ScanAsync(analysisId, workspace.RootPath, cancellationToken);
 
@@ -123,7 +124,7 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
             // -------------------------------------------------------------
             if (_repositoryAnalyzer != null)
             {
-                await UpdateAnalysisStageAsync(analysis, AnalysisStatus.Running, AnalysisStage.StaticAnalysis, cancellationToken);
+                await UpdateAnalysisStageAsync(analysis, AnalysisStatus.Analyzing, AnalysisStage.StaticAnalysis, cancellationToken);
                 var analysisResultModel = await _repositoryAnalyzer.AnalyzeAsync(workspace.RootPath, analysisId, cancellationToken);
 
                 // -------------------------------------------------------------
@@ -133,7 +134,7 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
                 {
                     try
                     {
-                        await UpdateAnalysisStageAsync(analysis, AnalysisStatus.Running, AnalysisStage.Embedding, cancellationToken);
+                        await UpdateAnalysisStageAsync(analysis, AnalysisStatus.Indexing, AnalysisStage.Embedding, cancellationToken);
                         var (embeddedResult, _) = await _chunkEmbeddingService.PopulateEmbeddingsAsync(analysisResultModel, cancellationToken);
                         analysisResultModel = embeddedResult;
                     }
@@ -148,7 +149,7 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
                 // -------------------------------------------------------------
                 if (_persistenceService != null)
                 {
-                    await UpdateAnalysisStageAsync(analysis, AnalysisStatus.Running, AnalysisStage.Persistence, cancellationToken);
+                    await UpdateAnalysisStageAsync(analysis, AnalysisStatus.Analyzing, AnalysisStage.Persistence, cancellationToken);
                     analysisResultModel.NewStatus = AnalysisStatus.Completed;
                     analysisResultModel.CurrentStage = AnalysisStage.Completed.ToString();
                     await _persistenceService.PersistAnalysisResultAsync(analysisResultModel, cancellationToken);
@@ -206,7 +207,7 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
     }
 
     private async Task UpdateAnalysisStageAsync(
-        Analysis analysis,
+        AnalysisEntity analysis,
         AnalysisStatus status,
         AnalysisStage stage,
         CancellationToken cancellationToken)
@@ -217,7 +218,7 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
     }
 
     private async Task MarkAnalysisFailedAsync(
-        Analysis analysis,
+        AnalysisEntity analysis,
         AnalysisStage stage,
         string errorMessage,
         CancellationToken cancellationToken)
@@ -230,7 +231,7 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
     }
 
     private async Task PersistScanResultsAsync(
-        Analysis analysis,
+        AnalysisEntity analysis,
         Application.Models.Scanning.ScanResult scanResult,
         CancellationToken cancellationToken)
     {
@@ -241,11 +242,10 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
             {
                 Id = Guid.NewGuid(),
                 AnalysisId = analysis.Id,
-                FilePath = file.RelativePath,
+                Path = file.RelativePath,
                 Language = file.Language,
-                LineCount = 0,
-                ByteSize = file.Size,
-                ContentHash = file.Hash,
+                Size = file.Size,
+                Hash = file.Hash,
                 AnalysisStatus = FileAnalysisStatus.Pending
             };
             _dbContext.SourceFiles.Add(sourceFile);
@@ -259,9 +259,8 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
                 Id = Guid.NewGuid(),
                 AnalysisId = analysis.Id,
                 Name = proj.Name,
-                FilePath = proj.RelativePath,
-                ProjectType = proj.ProjectType.ToString(),
-                TargetFramework = null
+                Path = proj.RelativePath,
+                ProjectType = proj.ProjectType.ToString()
             };
             _dbContext.Projects.Add(project);
         }
@@ -273,11 +272,19 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
     {
         try
         {
-            await workspace.CleanupAsync();
+            await _workspaceManager.CleanupWorkspaceAsync(workspace.AnalysisId);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to clean up workspace for analysis {AnalysisId}", workspace.AnalysisId);
+            try
+            {
+                await workspace.CleanupAsync();
+            }
+            catch
+            {
+                // ignore secondary cleanup exception
+            }
         }
     }
 }

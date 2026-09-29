@@ -18,24 +18,7 @@ public class ArchitectureService : IArchitectureService
 
     public async Task<ArchitectureResponse?> GetArchitectureAsync(Guid analysisId, CancellationToken ct = default)
     {
-        var analysis = await _context.Analyses
-            .AsNoTracking()
-            .FirstOrDefaultAsync(a => a.Id == analysisId, ct);
-
-        if (analysis == null)
-        {
-            return null;
-        }
-
-        if (analysis.Status == AnalysisStatus.Failed)
-        {
-            throw new AnalysisFailedException(analysis.CurrentStage);
-        }
-
-        if (analysis.Status != AnalysisStatus.Completed)
-        {
-            throw new AnalysisNotReadyException(analysis.Status.ToString());
-        }
+        await AnalysisValidationHelper.EnsureAnalysisCompletedAsync(_context, analysisId, ct);
 
         var projects = await _context.Projects
             .AsNoTracking()
@@ -68,6 +51,6 @@ public class ArchitectureService : IArchitectureService
             EvidenceId: d.EvidenceId?.ToString()
         )).ToList();
 
-        return new ArchitectureResponse(analysis.Id, nodes, edges);
+        return new ArchitectureResponse(analysisId, nodes, edges);
     }
 }

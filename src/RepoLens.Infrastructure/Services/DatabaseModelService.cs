@@ -16,6 +16,8 @@ public class DatabaseModelService : IDatabaseModelService
 
     public async Task<DatabaseModelResponse?> GetDatabaseModelAsync(Guid analysisId, CancellationToken ct = default)
     {
+        await AnalysisValidationHelper.EnsureAnalysisCompletedAsync(_context, analysisId, ct);
+
         var entities = await _context.DatabaseEntities
             .AsNoTracking()
             .Where(e => e.AnalysisId == analysisId)
@@ -50,6 +52,8 @@ public class DatabaseModelService : IDatabaseModelService
 
     public async Task<DatabaseEntityDetailResponse?> GetEntityDetailAsync(Guid analysisId, Guid entityId, CancellationToken ct = default)
     {
+        await AnalysisValidationHelper.EnsureAnalysisCompletedAsync(_context, analysisId, ct);
+
         var entity = await _context.DatabaseEntities
             .AsNoTracking()
             .Include(e => e.SourceSymbol)

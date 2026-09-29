@@ -17,6 +17,8 @@ public class ApiEndpointService : IApiEndpointService
 
     public async Task<PagedResult<EndpointItemDto>> GetEndpointsAsync(Guid analysisId, EndpointFilterParams filter, CancellationToken ct = default)
     {
+        await AnalysisValidationHelper.EnsureAnalysisCompletedAsync(_context, analysisId, ct);
+
         var page = Math.Max(1, filter.Page);
         var pageSize = Math.Clamp(filter.PageSize, 1, 100);
 
@@ -72,6 +74,8 @@ public class ApiEndpointService : IApiEndpointService
 
     public async Task<EndpointDetailResponse?> GetEndpointDetailAsync(Guid analysisId, Guid endpointId, CancellationToken ct = default)
     {
+        await AnalysisValidationHelper.EnsureAnalysisCompletedAsync(_context, analysisId, ct);
+
         var endpoint = await _context.ApiEndpoints
             .AsNoTracking()
             .Include(e => e.Project)
