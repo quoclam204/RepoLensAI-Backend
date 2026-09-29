@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using RepoLens.Application.Abstractions;
@@ -16,7 +17,6 @@ namespace RepoLens.Infrastructure.Pipeline;
 /// <summary>
 /// Pipeline orchestrator and lifecycle coordinator (T052 - T054, FR-002, FR-003).
 /// Coordinates repository acquisition, security validation, workspace management,
-/// static analysis, chunk embeddings, persistence, and analysis stage transitions.
 /// scanning, static analysis, embedding, persistence, and lifecycle transitions.
 /// </summary>
 public sealed class AnalysisPipeline : IAnalysisPipeline
@@ -31,6 +31,7 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
     private readonly AcquisitionOptions _acquisitionOptions;
     private readonly ILogger<AnalysisPipeline> _logger;
 
+    [ActivatorUtilitiesConstructor]
     public AnalysisPipeline(
         RepoLensDbContext dbContext,
         ITemporaryWorkspaceManager workspaceManager,
@@ -71,6 +72,9 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
             repositoryAnalyzer,
             persistenceService,
             chunkEmbeddingService,
+            repositoryAnalyzer!,
+            persistenceService!,
+            chunkEmbeddingService!,
             acquisitionOptions,
             logger)
     {
@@ -157,6 +161,9 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
             {
                 analysisResult = new AnalysisResultModel { AnalysisId = analysisId };
             }
+            var analysisResult = _repositoryAnalyzer != null
+                ? await _repositoryAnalyzer.AnalyzeAsync(workspace.RootPath, analysisId, cancellationToken)
+                : null;
 
             // -------------------------------------------------------------
             // Stage 5: Document Chunk Embeddings
@@ -168,6 +175,18 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
             {
                 var (populated, _) = await _chunkEmbeddingService.PopulateEmbeddingsAsync(analysisResult, cancellationToken);
                 embeddedResult = populated;
+            if (_chunkEmbeddingService != null && analysisResult != null && analysisResult.DocumentChunks.Count > 0)
+            {
+                try
+                {
+                    await UpdateAnalysisStageAsync(analysis, AnalysisStatus.Indexing, AnalysisStage.Embedding, cancellationToken);
+                    var (embeddedResult, _) = await _chunkEmbeddingService.PopulateEmbeddingsAsync(analysisResult, cancellationToken);
+                    analysisResult = embeddedResult;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Document chunk embedding failed or was skipped for analysis {AnalysisId}. Proceeding with persistence.", analysisId);
+                }
             }
 
             // -------------------------------------------------------------
@@ -178,6 +197,15 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
             if (_persistenceService != null)
             {
                 await _persistenceService.PersistAnalysisResultAsync(embeddedResult, cancellationToken);
+            if (_persistenceService != null && analysisResult != null)
+            {
+                analysisResult.NewStatus = AnalysisStatus.Completed;
+                analysisResult.CurrentStage = AnalysisStage.Completed.ToString();
+                await _persistenceService.PersistAnalysisResultAsync(analysisResult, cancellationToken);
+            }
+            else
+            {
+                await PersistScanResultsAsync(analysis, scanResult, cancellationToken);
             }
 
             // -------------------------------------------------------------
@@ -199,6 +227,8 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
             {
                 var stage = analysis.CurrentStage ?? AnalysisStage.Validation.ToString();
                 await MarkAnalysisFailedAsync(analysis, stage, "Operation was cancelled.", CancellationToken.None);
+                var failedStage = Enum.TryParse<AnalysisStage>(analysis.CurrentStage, out var stg) ? stg : AnalysisStage.Validation;
+                await MarkAnalysisFailedAsync(analysis, failedStage, "Operation was cancelled.", CancellationToken.None);
             }
             throw;
         }
@@ -264,6 +294,44 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
         }
     }
 
+    private async Task PersistScanResultsAsync(
+        AnalysisEntity analysis,
+        Application.Models.Scanning.ScanResult scanResult,
+        CancellationToken cancellationToken)
+    {
+        // Add SourceFiles to DbContext
+        foreach (var file in scanResult.Files)
+        {
+            var sourceFile = new SourceFile
+            {
+                Id = Guid.NewGuid(),
+                AnalysisId = analysis.Id,
+                Path = file.RelativePath,
+                Language = file.Language,
+                Size = file.Size,
+                Hash = file.Hash,
+                AnalysisStatus = FileAnalysisStatus.Pending
+            };
+            _dbContext.SourceFiles.Add(sourceFile);
+        }
+
+        // Add Projects to DbContext
+        foreach (var proj in scanResult.DetectedProjects)
+        {
+            var project = new Project
+            {
+                Id = Guid.NewGuid(),
+                AnalysisId = analysis.Id,
+                Name = proj.Name,
+                Path = proj.RelativePath,
+                ProjectType = proj.ProjectType.ToString()
+            };
+            _dbContext.Projects.Add(project);
+        }
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+
     private async Task CleanupWorkspaceSafeAsync(ITemporaryWorkspace workspace)
     {
         try
@@ -280,6 +348,7 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
             catch
             {
                 // Ignore fallback failure
+                // ignore secondary cleanup exception
             }
         }
     }

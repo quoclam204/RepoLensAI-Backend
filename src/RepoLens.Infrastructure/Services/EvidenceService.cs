@@ -18,6 +18,8 @@ public class EvidenceService : IEvidenceService
 
     public async Task<PagedResult<EvidenceDetailResponse>> GetEvidencesAsync(Guid analysisId, EvidenceFilterParams filter, CancellationToken ct = default)
     {
+        await AnalysisValidationHelper.EnsureAnalysisCompletedAsync(_context, analysisId, ct);
+
         var page = Math.Max(1, filter.Page);
         var pageSize = Math.Clamp(filter.PageSize, 1, 100);
 
@@ -67,6 +69,8 @@ public class EvidenceService : IEvidenceService
 
     public async Task<EvidenceDetailResponse?> GetEvidenceDetailAsync(Guid analysisId, Guid evidenceId, CancellationToken ct = default)
     {
+        await AnalysisValidationHelper.EnsureAnalysisCompletedAsync(_context, analysisId, ct);
+
         var evidence = await _context.Evidences
             .AsNoTracking()
             .FirstOrDefaultAsync(e => e.AnalysisId == analysisId && e.Id == evidenceId, ct);

@@ -16,6 +16,8 @@ public class SymbolService : ISymbolService
 
     public async Task<SymbolDetailResponse?> GetSymbolDetailAsync(Guid analysisId, Guid symbolId, CancellationToken ct = default)
     {
+        await AnalysisValidationHelper.EnsureAnalysisCompletedAsync(_context, analysisId, ct);
+
         var symbol = await _context.CodeSymbols
             .AsNoTracking()
             .Include(s => s.SourceFile)
