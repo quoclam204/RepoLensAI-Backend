@@ -26,10 +26,36 @@ public class RepoLensDbContextFactory : IDesignTimeDbContextFactory<RepoLensDbCo
                 "or provided via the 'ConnectionStrings__Postgres' / 'POSTGRES_CONNECTION' environment variable.");
         }
 
+        bool hasVector = false;
+        try
+        {
+            using var conn = new Npgsql.NpgsqlConnection(connectionString);
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'vector');";
+            var res = cmd.ExecuteScalar();
+            if (res is bool b && b)
+            {
+                hasVector = true;
+            }
+        }
+        catch
+        {
+            hasVector = false;
+        }
+
+        RepoLensDbContext.HasPgvectorExtension = hasVector;
+
         var optionsBuilder = new DbContextOptionsBuilder<RepoLensDbContext>();
         optionsBuilder.UseNpgsql(connectionString, b =>
-            b.UseVector()
-             .MigrationsAssembly(typeof(RepoLensDbContext).Assembly.FullName));
+        {
+            if (hasVector)
+            {
+                b.UseVector();
+            }
+            b.MigrationsAssembly(typeof(RepoLensDbContext).Assembly.FullName);
+        });
+        optionsBuilder.ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning));
 
         return new RepoLensDbContext(optionsBuilder.Options);
     }

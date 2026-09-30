@@ -13,10 +13,40 @@ public static class DependencyInjection
     {
         var connectionString = configuration.GetConnectionString("Postgres");
 
+        bool hasVectorExtension = false;
+        if (!string.IsNullOrWhiteSpace(connectionString))
+        {
+            try
+            {
+                using var conn = new Npgsql.NpgsqlConnection(connectionString);
+                conn.Open();
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = "SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'vector');";
+                var result = cmd.ExecuteScalar();
+                if (result is bool b && b)
+                {
+                    hasVectorExtension = true;
+                }
+            }
+            catch
+            {
+                hasVectorExtension = false;
+            }
+        }
+        RepoLensDbContext.HasPgvectorExtension = hasVectorExtension;
+
         services.AddDbContext<RepoLensDbContext>(options =>
+        {
             options.UseNpgsql(connectionString, b =>
-                b.UseVector()
-                .MigrationsAssembly(typeof(RepoLensDbContext).Assembly.FullName)));
+            {
+                if (hasVectorExtension)
+                {
+                    b.UseVector();
+                }
+                b.MigrationsAssembly(typeof(RepoLensDbContext).Assembly.FullName);
+            });
+            options.ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning));
+        });
 
         // Register Workspace Management (T031)
         services.Configure<WorkspaceOptions>(opts =>

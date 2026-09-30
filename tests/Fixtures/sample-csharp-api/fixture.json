@@ -1,0 +1,27 @@
+{
+  "id": "sample-csharp-api",
+  "version": "v1",
+  "language": "csharp",
+  "description": "Minimal C# ASP.NET Core API golden fixture (T100). Static-analysis only; never built or executed.",
+  "expected": {
+    "project": { "name": "sample-csharp-api", "type": "CSharp" },
+    "nodes": [
+      { "type": "Class", "name": "WeatherForecast" },
+      { "type": "Interface", "name": "IWeatherService" },
+      { "type": "Class", "name": "WeatherService" },
+      { "type": "Class", "name": "WeatherController" },
+      { "type": "Class", "name": "WeatherDbContext" },
+      { "type": "DatabaseEntity", "name": "WeatherForecast" },
+      { "type": "Endpoint", "httpMethod": "GET" },
+      { "type": "Endpoint", "httpMethod": "POST" }
+    ],
+    "relationships": [
+      { "type": "Implements", "source": "class:WeatherService", "target": "interface:IWeatherService" },
+      { "type": "DependsOn", "source": "class:WeatherController", "target": "interface:IWeatherService" },
+      { "type": "Exposes", "source": "class:WeatherController", "target": "endpoint:get:/api/Weather" },
+      { "type": "MapsTo", "source": "class:WeatherDbContext", "target": "entity:WeatherForecast" }
+    ],
+    "evidenceFiles": [ "Program.cs", "WeatherController.cs", "WeatherDbContext.cs" ],
+    "evidenceSnippets": [ "AddDbContext<WeatherDbContext>", "AddAuthentication", "[Authorize]" ]
+  }
+}

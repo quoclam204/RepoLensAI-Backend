@@ -1,0 +1,27 @@
+{
+  "id": "sample-typescript-app",
+  "version": "v1",
+  "language": "typescript",
+  "description": "Pure TypeScript (non-Next.js) golden fixture (T100). Static-analysis only; no npm install required.",
+  "expected": {
+    "project": { "name": "sample-typescript-app", "type": "Node" },
+    "nodes": [
+      { "type": "Interface", "name": "User" },
+      { "type": "Struct", "name": "UserRole" },
+      { "type": "Enum", "name": "UserStatus" },
+      { "type": "Class", "name": "UserService" },
+      { "type": "Method", "name": "formatUser" },
+      { "type": "Method", "name": "checkHealth" },
+      { "type": "Endpoint", "httpMethod": "GET", "route": "/api/users" },
+      { "type": "Endpoint", "httpMethod": "GET", "route": "/api/health" }
+    ],
+    "relationships": [
+      { "type": "DependsOn", "source": "project:sample-typescript-app", "target": "package:express" },
+      { "type": "DependsOn", "source": "file:src/userService.ts", "target": "module:./models" },
+      { "type": "DependsOn", "source": "file:src/api.ts", "target": "module:express" },
+      { "type": "Exposes", "source": "file:src/api.ts", "target": "endpoint:get:/api/users" }
+    ],
+    "evidenceFiles": [ "package.json", "src/models.ts", "src/userService.ts", "src/api.ts" ],
+    "evidenceSnippets": [ "interface User", "class UserService", "app.get" ]
+  }
+}

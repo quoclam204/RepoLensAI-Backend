@@ -1,0 +1,20 @@
+{
+  "fixtureId": "sample-nextjs-app",
+  "fixtureVersion": "v1",
+  "notes": "Frozen ground truth for T100. Semantic expectations only: node/relationship identities, evidence files and snippets. Timestamps, GUIDs and machine paths are excluded by design.",
+  "expectedProjects": [{ "name": "sample-nextjs-app", "type": "Node" }],
+  "expectedNodes": [
+    { "id": "interface:UserProfile", "type": "Interface", "name": "UserProfile" },
+    { "id": "component:HomePage", "type": "Component", "name": "HomePage" },
+    { "id": "endpoint:get:/api/users", "type": "Endpoint", "name": "GET /api/users" }
+  ],
+  "expectedRelationships": [
+    { "type": "DependsOn", "sourceId": "project:sample-nextjs-app", "targetId": "package:next" },
+    { "type": "DependsOn", "sourceId": "project:sample-nextjs-app", "targetId": "package:react" },
+    { "type": "DependsOn", "sourceId": "file:app/page.tsx", "targetId": "module:axios" },
+    { "type": "Calls", "sourceId": "file:app/page.tsx", "targetId": "endpoint:get:/api/users" }
+  ],
+  "expectedEvidenceFiles": [ "package.json", "app/page.tsx" ],
+  "expectedEvidenceSnippets": [ "\"next\"", "UserProfile", "axios.get" ],
+  "expectedErrorCount": 0
+}

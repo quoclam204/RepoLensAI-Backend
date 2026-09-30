@@ -1,0 +1,21 @@
+{
+  "id": "sample-nextjs-app",
+  "version": "v1",
+  "language": "typescript-nextjs",
+  "description": "Minimal Next.js + React + TypeScript golden fixture (T100). Static-analysis only; no npm install required.",
+  "expected": {
+    "project": { "name": "sample-nextjs-app", "type": "Node" },
+    "nodes": [
+      { "type": "Interface", "name": "UserProfile" },
+      { "type": "Component", "name": "HomePage" },
+      { "type": "Endpoint", "httpMethod": "GET", "route": "/api/users" }
+    ],
+    "relationships": [
+      { "type": "DependsOn", "source": "project:sample-nextjs-app", "target": "package:next" },
+      { "type": "DependsOn", "source": "project:sample-nextjs-app", "target": "package:react" },
+      { "type": "DependsOn", "source": "file:app/page.tsx", "target": "module:axios" }
+    ],
+    "evidenceFiles": [ "package.json", "app/page.tsx" ],
+    "evidenceSnippets": [ "\"next\"", "UserProfile", "axios.get" ]
+  }
+}
