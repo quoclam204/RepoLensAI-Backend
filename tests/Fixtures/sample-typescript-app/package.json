@@ -1,0 +1,14 @@
+{
+  "name": "sample-typescript-app",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "express": "4.19.0"
+  },
+  "devDependencies": {
+    "typescript": "5.4.0"
+  }
+}

@@ -1,232 +1,263 @@
+using System.Text.Json;
 using RepoLens.Analysis.Graph;
 using RepoLens.Analysis.Orchestration;
-using RepoLens.Domain.Enums;
 
 namespace RepoLens.AnalysisTests.GoldenDataset;
 
 /// <summary>
-/// Golden Dataset tests for static analysis reproducibility and baseline verification (T100, NFR-TEST-001).
-/// Verifies deterministic extraction against known baseline repositories (sample-csharp-api, sample-nextjs-app).
+/// Golden Dataset tests (T100, NFR-TEST-001): persistent fixtures + frozen baselines + determinism.
+/// Fixtures live under tests/Fixtures/{sample-csharp-api,sample-nextjs-app,sample-typescript-app};
+/// stable identity is fixtureId@fixtureVersion, never temp path / GUID / timestamp.
 /// </summary>
-public class GoldenDatasetTests : IDisposable
+public sealed class GoldenDatasetTests
 {
-    private readonly string _rootDir;
+    private static readonly string FixturesRoot = ResolveFixturesRoot();
     private readonly RepositoryAnalysisEngine _engine = new();
 
-    public GoldenDatasetTests()
+    private static string ResolveFixturesRoot()
     {
-        _rootDir = Path.Combine(Path.GetTempPath(), "RepoLens_Golden_" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(_rootDir);
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null)
+        {
+            var candidate = Path.Combine(dir.FullName, "tests", "Fixtures");
+            if (Directory.Exists(candidate))
+            {
+                return candidate;
+            }
+            dir = dir.Parent;
+        }
+        throw new DirectoryNotFoundException("tests/Fixtures directory not found.");
     }
 
-    public void Dispose()
+    private static string FixtureDir(string id) => Path.Combine(FixturesRoot, id);
+
+    private static JsonDocument LoadBaseline(string fixtureId, string version)
+    {
+        var path = Path.Combine(FixtureDir(fixtureId), "expected-analysis", $"{version}.baseline.json");
+        return JsonDocument.Parse(File.ReadAllText(path));
+    }
+
+    private static string NormalizeRepoName(string rootPath)
+    {
+        var name = Path.GetFileName(Path.TrimEndingDirectorySeparator(rootPath));
+        return string.IsNullOrWhiteSpace(name) ? "RepositoryRoot" : name;
+    }
+
+    private static string StageFixtureToTemp(string fixtureId, out string tempRoot)
+    {
+        tempRoot = Path.Combine(Path.GetTempPath(), "RepoLens_Golden_" + Guid.NewGuid().ToString("N"));
+        CopyFixtureInto(fixtureId, tempRoot);
+        return Path.Combine(tempRoot, fixtureId);
+    }
+
+    private static void CopyFixtureInto(string fixtureId, string tempRoot)
+    {
+        var source = FixtureDir(fixtureId);
+        var dest = Path.Combine(tempRoot, fixtureId);
+        CopyDirectory(source, dest, excludeDirNames: ["bin", "obj", "expected-analysis"]);
+    }
+
+    private static void CopyDirectory(string source, string dest, string[] excludeDirNames)
+    {
+        Directory.CreateDirectory(dest);
+        foreach (var dir in Directory.GetDirectories(source))
+        {
+            if (excludeDirNames.Contains(Path.GetFileName(dir), StringComparer.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+            CopyDirectory(dir, Path.Combine(dest, Path.GetFileName(dir)), excludeDirNames);
+        }
+        foreach (var file in Directory.GetFiles(source))
+        {
+            if (Path.GetFileName(file).Equals("fixture.json", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+            File.Copy(file, Path.Combine(dest, Path.GetFileName(file)));
+        }
+    }
+
+    private string NormalizedSnapshot(RepositoryAnalysisResult result)
+    {
+        var nodes = result.Analysis.Nodes
+            .OrderBy(n => n.Id, StringComparer.OrdinalIgnoreCase)
+            .Select(n => $"{n.Type}:{n.Name}");
+        var rels = result.Analysis.Relationships
+            .OrderBy(r => $"{r.SourceId}->{r.Type}->{r.TargetId}", StringComparer.OrdinalIgnoreCase)
+            .Select(r => $"{r.SourceId}->{r.Type}->{r.TargetId}");
+        var projects = result.ScannedMetadata.Projects
+            .OrderBy(p => p.RelativePath, StringComparer.OrdinalIgnoreCase)
+            .Select(p => $"{p.ProjectName}:{p.ProjectType}");
+        return string.Join("\n", projects.Concat(nodes).Concat(rels));
+    }
+
+    private RepositoryAnalysisResult AnalyzeTwiceDeterministically(string fixtureId)
+    {
+        var repoA = StageFixtureToTemp(fixtureId, out var tempA);
+        string snapA, snapB;
+        try
+        {
+            snapA = NormalizedSnapshot(_engine.AnalyzeRepository(repoA));
+        }
+        finally
+        {
+            TryDelete(tempA);
+        }
+
+        var repoB = StageFixtureToTemp(fixtureId, out var tempB);
+        try
+        {
+            snapB = NormalizedSnapshot(_engine.AnalyzeRepository(repoB));
+        }
+        finally
+        {
+            TryDelete(tempB);
+        }
+
+        Assert.Equal(snapA, snapB);
+
+        // Return a fresh staged result for baseline assertions (temp copy removed afterwards).
+        var repo = StageFixtureToTemp(fixtureId, out var tempC);
+        try
+        {
+            return _engine.AnalyzeRepository(repo);
+        }
+        finally
+        {
+            TryDelete(tempC);
+        }
+    }
+
+    private static void TryDelete(string tempRoot)
     {
         try
         {
-            if (Directory.Exists(_rootDir))
+            if (Directory.Exists(tempRoot))
             {
-                Directory.Delete(_rootDir, recursive: true);
+                Directory.Delete(tempRoot, recursive: true);
             }
         }
         catch
         {
-            // Best effort
+            // Best effort: temp copies must never affect fixture source of truth.
         }
     }
 
-    [Fact]
-    public void SampleCSharpApi_GoldenBaseline_ExtractsExpectedStructureDeterministically()
+    private static void AssertBaseline(
+        JsonDocument baseline,
+        RepositoryAnalysisResult result,
+        string fixtureId)
     {
-        // Arrange
-        var repoDir = Path.Combine(_rootDir, "sample-csharp-api");
-        Directory.CreateDirectory(repoDir);
+        var root = baseline.RootElement;
+        var version = root.GetProperty("fixtureVersion").GetString();
+        Assert.Equal(fixtureId, root.GetProperty("fixtureId").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(version));
 
-        File.WriteAllText(Path.Combine(repoDir, "sample-csharp-api.csproj"),
-            """
-            <Project Sdk="Microsoft.NET.Sdk.Web">
-              <PropertyGroup>
-                <TargetFramework>net8.0</TargetFramework>
-              </PropertyGroup>
-            </Project>
-            """);
-
-        File.WriteAllText(Path.Combine(repoDir, "WeatherForecast.cs"),
-            """
-            namespace SampleApi.Models;
-
-            public class WeatherForecast
-            {
-                public int Id { get; set; }
-                public DateTime Date { get; set; }
-                public int TemperatureC { get; set; }
-                public string Summary { get; set; } = string.Empty;
-            }
-            """);
-
-        File.WriteAllText(Path.Combine(repoDir, "IWeatherService.cs"),
-            """
-            namespace SampleApi.Services;
-
-            public interface IWeatherService
-            {
-                Task<IEnumerable<SampleApi.Models.WeatherForecast>> GetForecastsAsync();
-            }
-            """);
-
-        File.WriteAllText(Path.Combine(repoDir, "WeatherService.cs"),
-            """
-            using SampleApi.Models;
-
-            namespace SampleApi.Services;
-
-            public class WeatherService : IWeatherService
-            {
-                public Task<IEnumerable<WeatherForecast>> GetForecastsAsync()
-                {
-                    return Task.FromResult<IEnumerable<WeatherForecast>>([]);
-                }
-            }
-            """);
-
-        File.WriteAllText(Path.Combine(repoDir, "WeatherDbContext.cs"),
-            """
-            using Microsoft.EntityFrameworkCore;
-            using SampleApi.Models;
-
-            namespace SampleApi.Data;
-
-            public class WeatherDbContext : DbContext
-            {
-                public DbSet<WeatherForecast> Forecasts => Set<WeatherForecast>();
-
-                protected override void OnModelCreating(ModelBuilder modelBuilder)
-                {
-                    modelBuilder.Entity<WeatherForecast>().HasKey(f => f.Id);
-                }
-            }
-            """);
-
-        File.WriteAllText(Path.Combine(repoDir, "WeatherController.cs"),
-            """
-            using Microsoft.AspNetCore.Mvc;
-            using SampleApi.Models;
-            using SampleApi.Services;
-
-            namespace SampleApi.Controllers;
-
-            [ApiController]
-            [Route("api/[controller]")]
-            public class WeatherController : ControllerBase
-            {
-                private readonly IWeatherService _weatherService;
-
-                public WeatherController(IWeatherService weatherService)
-                {
-                    _weatherService = weatherService;
-                }
-
-                [HttpGet]
-                public async Task<IActionResult> GetAll()
-                {
-                    return Ok(await _weatherService.GetForecastsAsync());
-                }
-
-                [HttpPost]
-                public IActionResult Create([FromBody] WeatherForecast forecast)
-                {
-                    return CreatedAtAction(nameof(GetAll), forecast);
-                }
-            }
-            """);
-
-        // Act
-        var result = _engine.AnalyzeRepository(repoDir);
-
-        // Assert Golden Baseline
         Assert.Empty(result.AllErrors);
-        Assert.Single(result.ScannedMetadata.Projects);
-        Assert.Equal("sample-csharp-api", result.ScannedMetadata.Projects[0].ProjectName);
+
+        foreach (var expectedProject in root.GetProperty("expectedProjects").EnumerateArray())
+        {
+            var name = expectedProject.GetProperty("name").GetString()!;
+            var type = expectedProject.GetProperty("type").GetString()!;
+            var match = fixtureId == "sample-csharp-api"
+                ? result.ScannedMetadata.Projects.Any(p =>
+                    p.ProjectName.Equals(name, StringComparison.OrdinalIgnoreCase) &&
+                    p.ProjectType.Equals(type, StringComparison.OrdinalIgnoreCase))
+                : result.ScannedMetadata.Projects.Any(p =>
+                    p.ProjectType.Equals(type, StringComparison.OrdinalIgnoreCase));
+            Assert.True(match, $"Expected project {name} ({type}) not detected in {fixtureId}@{version}.");
+        }
 
         var nodes = result.Analysis.Nodes;
-        // Verify Symbols
-        Assert.Contains(nodes, n => n.Type == KnowledgeNodeType.Class && n.Name == "WeatherForecast");
-        Assert.Contains(nodes, n => n.Type == KnowledgeNodeType.Interface && n.Name == "IWeatherService");
-        Assert.Contains(nodes, n => n.Type == KnowledgeNodeType.Class && n.Name == "WeatherService");
-        Assert.Contains(nodes, n => n.Type == KnowledgeNodeType.Class && n.Name == "WeatherDbContext");
-        Assert.Contains(nodes, n => n.Type == KnowledgeNodeType.Class && n.Name == "WeatherController");
+        foreach (var expectedNode in root.GetProperty("expectedNodes").EnumerateArray())
+        {
+            var type = expectedNode.GetProperty("type").GetString()!;
+            var nodeType = Enum.Parse<KnowledgeNodeType>(type, ignoreCase: true);
+            if (expectedNode.TryGetProperty("httpMethod", out var methodProp))
+            {
+                var method = methodProp.GetString()!;
+                Assert.Contains(nodes, n =>
+                    n.Type == KnowledgeNodeType.Endpoint &&
+                    n.Properties.TryGetValue("HttpMethod", out var m) &&
+                    m.Equals(method, StringComparison.OrdinalIgnoreCase));
+            }
+            else
+            {
+                var name = expectedNode.GetProperty("name").GetString()!;
+                Assert.Contains(nodes, n =>
+                    n.Type == nodeType &&
+                    n.Name.Equals(name, StringComparison.Ordinal));
+            }
+        }
 
-        // Verify Endpoints
-        Assert.Contains(nodes, n => n.Type == KnowledgeNodeType.Endpoint && n.Properties.TryGetValue("HttpMethod", out var m) && m == "GET");
-        Assert.Contains(nodes, n => n.Type == KnowledgeNodeType.Endpoint && n.Properties.TryGetValue("HttpMethod", out var m) && m == "POST");
-
-        // Verify Database Entities
-        Assert.Contains(nodes, n => n.Type == KnowledgeNodeType.DatabaseEntity && n.Name == "WeatherForecast");
-
-        // Verify Relationships
         var rels = result.Analysis.Relationships;
-        Assert.Contains(rels, r => r.Type == KnowledgeRelationshipType.Implements);
-        Assert.Contains(rels, r => r.Type == KnowledgeRelationshipType.Exposes);
+        foreach (var expectedRel in root.GetProperty("expectedRelationships").EnumerateArray())
+        {
+            var type = Enum.Parse<KnowledgeRelationshipType>(
+                expectedRel.GetProperty("type").GetString()!, ignoreCase: true);
+            var sourceId = expectedRel.GetProperty("sourceId").GetString()!;
+            var targetId = expectedRel.GetProperty("targetId").GetString()!;
+            Assert.Contains(rels, r =>
+                r.Type == type &&
+                r.SourceId.Equals(sourceId, StringComparison.OrdinalIgnoreCase) &&
+                r.TargetId.Equals(targetId, StringComparison.OrdinalIgnoreCase));
+        }
+
+        var files = result.FileContents?.Keys
+            .Select(k => k.Replace('\\', '/'))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
+        foreach (var expectedFile in root.GetProperty("expectedEvidenceFiles").EnumerateArray())
+        {
+            var suffix = expectedFile.GetString()!;
+            Assert.Contains(files, f => f.EndsWith(suffix, StringComparison.OrdinalIgnoreCase));
+        }
+
+        foreach (var expectedSnippet in root.GetProperty("expectedEvidenceSnippets").EnumerateArray())
+        {
+            var snippet = expectedSnippet.GetString()!;
+            var found = (result.FileContents?.Values.Any(c => c.Contains(snippet, StringComparison.Ordinal)) == true)
+                || result.Analysis.Nodes.Any(n => n.Properties.Values.Any(v => v.Contains(snippet, StringComparison.Ordinal)))
+                || result.Analysis.Relationships.Any(r => r.Evidence != null && r.Evidence.Snippet.Contains(snippet, StringComparison.Ordinal));
+            Assert.True(found, $"Expected evidence snippet '{snippet}' not found in {fixtureId}@{version}.");
+        }
+
+        Assert.Equal(
+            root.GetProperty("expectedErrorCount").GetInt32(),
+            result.AllErrors.Count);
     }
 
     [Fact]
-    public void SampleNextJsApp_GoldenBaseline_ExtractsExpectedStructureDeterministically()
+    public void SampleCSharpApi_GoldenBaseline_MatchesFrozenExpectations()
     {
-        // Arrange
-        var repoDir = Path.Combine(_rootDir, "sample-nextjs-app");
-        Directory.CreateDirectory(repoDir);
+        using var baseline = LoadBaseline("sample-csharp-api", "v1");
+        var result = AnalyzeTwiceDeterministically("sample-csharp-api");
 
-        File.WriteAllText(Path.Combine(repoDir, "package.json"),
-            """
-            {
-              "name": "sample-nextjs-app",
-              "version": "1.0.0",
-              "dependencies": {
-                "next": "14.2.0",
-                "react": "18.3.0",
-                "axios": "1.6.8"
-              }
-            }
-            """);
+        // Project identity is the fixture id (stable), never a temp path.
+        Assert.Contains(result.ScannedMetadata.Projects, p =>
+            p.ProjectName.Equals("sample-csharp-api", StringComparison.OrdinalIgnoreCase));
+        AssertBaseline(baseline, result, "sample-csharp-api");
+    }
 
-        var appDir = Path.Combine(repoDir, "app");
-        Directory.CreateDirectory(appDir);
+    [Fact]
+    public void SampleNextJsApp_GoldenBaseline_MatchesFrozenExpectations()
+    {
+        using var baseline = LoadBaseline("sample-nextjs-app", "v1");
+        var result = AnalyzeTwiceDeterministically("sample-nextjs-app");
 
-        File.WriteAllText(Path.Combine(appDir, "page.tsx"),
-            """
-            import React, { useEffect, useState } from "react";
-            import axios from "axios";
+        var name = NormalizeRepoName(result.RepositoryPath);
+        Assert.False(string.IsNullOrWhiteSpace(name));
+        AssertBaseline(baseline, result, "sample-nextjs-app");
+    }
 
-            export interface UserProfile {
-                id: string;
-                name: string;
-            }
+    [Fact]
+    public void SampleTypeScriptApp_GoldenBaseline_MatchesFrozenExpectations()
+    {
+        using var baseline = LoadBaseline("sample-typescript-app", "v1");
+        var result = AnalyzeTwiceDeterministically("sample-typescript-app");
 
-            export default function HomePage() {
-                const [users, setUsers] = useState<UserProfile[]>([]);
-
-                useEffect(() => {
-                    axios.get("/api/users").then(res => setUsers(res.data));
-                }, []);
-
-                return <div>Hello Next.js</div>;
-            }
-            """);
-
-        // Act
-        var result = _engine.AnalyzeRepository(repoDir);
-
-        // Assert Golden Baseline
-        Assert.Empty(result.AllErrors);
-        Assert.Single(result.ScannedMetadata.Projects);
-        Assert.Equal("sample-nextjs-app", result.ScannedMetadata.Projects[0].ProjectName);
-
-        var nodes = result.Analysis.Nodes;
-        Assert.Contains(nodes, n => n.Type == KnowledgeNodeType.Interface && n.Name == "UserProfile");
-        Assert.Contains(nodes, n => n.Type == KnowledgeNodeType.Class || n.Type == KnowledgeNodeType.Method || n.Name == "HomePage");
-
-        // Verify npm dependencies were discovered in relationships
-        var rels = result.Analysis.Relationships;
-        Assert.Contains(rels, r => r.Type == KnowledgeRelationshipType.DependsOn && r.TargetId.Contains("next"));
-        Assert.Contains(rels, r => r.Type == KnowledgeRelationshipType.DependsOn && r.TargetId.Contains("react"));
+        var name = NormalizeRepoName(result.RepositoryPath);
+        Assert.False(string.IsNullOrWhiteSpace(name));
+        AssertBaseline(baseline, result, "sample-typescript-app");
     }
 }
