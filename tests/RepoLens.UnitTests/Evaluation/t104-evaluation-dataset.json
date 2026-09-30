@@ -1,0 +1,231 @@
+{
+  "datasetId": "t104-ai-evaluation",
+  "datasetVersion": "v1",
+  "source": "T100 golden fixtures (source of truth). Ground truth comes from tests/Fixtures/*/expected-analysis/v1.baseline.json. No case uses the real RepoLens repository.",
+  "fixtures": [
+    { "fixtureId": "sample-csharp-api", "fixtureVersion": "v1" },
+    { "fixtureId": "sample-nextjs-app", "fixtureVersion": "v1" },
+    { "fixtureId": "sample-typescript-app", "fixtureVersion": "v1" }
+  ],
+  "cases": [
+    {
+      "caseId": "T104-ARCH-01",
+      "category": "architecture",
+      "fixtureId": "sample-csharp-api",
+      "fixtureVersion": "v1",
+      "question": "What is the architecture of this project?",
+      "answerable": true,
+      "expectedBehavior": "answer-with-evidence",
+      "expectedEvidenceFiles": [ "Program.cs", "WeatherController.cs", "WeatherService.cs", "IWeatherService.cs" ],
+      "expectedEvidenceSnippets": [ "AddScoped<IWeatherService, WeatherService>", "class WeatherController", "class WeatherService", "interface IWeatherService" ],
+      "expectedEvidenceKeys": [ "class:WeatherController", "class:WeatherService", "interface:IWeatherService", "class:WeatherDbContext" ],
+      "expectedConcepts": [ "Controller", "Service", "Interface", "Dependency Injection", "ASP.NET Core API" ],
+      "expectedFacts": [
+        "WeatherController depends on IWeatherService",
+        "WeatherService implements IWeatherService",
+        "Program.cs registers IWeatherService to WeatherService via AddScoped"
+      ],
+      "answerCharacteristics": [
+        "Names WeatherController, WeatherService and IWeatherService",
+        "Mentions constructor/DI registration as the wiring mechanism",
+        "Cites Program.cs / WeatherController.cs / WeatherService.cs evidence",
+        "Does not claim Clean Architecture layers beyond fixture evidence"
+      ]
+    },
+    {
+      "caseId": "T104-AUTH-01",
+      "category": "authentication",
+      "fixtureId": "sample-csharp-api",
+      "fixtureVersion": "v1",
+      "question": "Where is authentication implemented?",
+      "answerable": true,
+      "expectedBehavior": "answer-with-evidence",
+      "expectedEvidenceFiles": [ "Program.cs", "WeatherController.cs" ],
+      "expectedEvidenceSnippets": [ "AddAuthentication", "AddAuthorization", "AddJwtBearer", "[Authorize]", "UseAuthentication", "UseAuthorization" ],
+      "expectedEvidenceKeys": [],
+      "expectedConcepts": [ "Authentication", "Authorization", "JwtBearer" ],
+      "expectedFacts": [
+        "JWT bearer scheme registered in Program.cs via AddAuthentication/AddJwtBearer",
+        "Authorization enforced via [Authorize] on WeatherController.GetAll",
+        "UseAuthentication and UseAuthorization wired in the request pipeline"
+      ],
+      "answerCharacteristics": [
+        "Points to Program.cs scheme registration",
+        "Points to [Authorize] usage in WeatherController.cs",
+        "Does not invent roles, policies or credentials beyond fixture evidence"
+      ]
+    },
+    {
+      "caseId": "T104-API-01",
+      "category": "api-endpoints",
+      "fixtureId": "sample-csharp-api",
+      "fixtureVersion": "v1",
+      "question": "What API endpoints exist?",
+      "answerable": true,
+      "expectedBehavior": "answer-with-evidence",
+      "expectedEvidenceFiles": [ "WeatherController.cs" ],
+      "expectedEvidenceSnippets": [ "[HttpGet]", "[HttpPost]", "api/[controller]" ],
+      "expectedEvidenceKeys": [ "endpoint:get:/api/Weather", "endpoint:post:/api/Weather" ],
+      "expectedConcepts": [ "GET /api/Weather", "POST /api/Weather", "WeatherController.GetAll", "WeatherController.Create" ],
+      "expectedFacts": [
+        "GET /api/Weather handled by WeatherController.GetAll",
+        "POST /api/Weather handled by WeatherController.Create"
+      ],
+      "answerCharacteristics": [
+        "Lists both GET and POST routes",
+        "Maps each route to its handler method",
+        "Cites WeatherController.cs evidence"
+      ]
+    },
+    {
+      "caseId": "T104-API-02",
+      "category": "api-endpoints",
+      "fixtureId": "sample-typescript-app",
+      "fixtureVersion": "v1",
+      "question": "What API endpoints exist in the TypeScript app?",
+      "answerable": true,
+      "expectedBehavior": "answer-with-evidence",
+      "expectedEvidenceFiles": [ "src/api.ts" ],
+      "expectedEvidenceSnippets": [ "app.get", "/api/users" ],
+      "expectedEvidenceKeys": [ "endpoint:get:/api/users" ],
+      "expectedConcepts": [ "GET /api/users", "express", "app.get" ],
+      "expectedFacts": [
+        "GET /api/users exposed via app.get in src/api.ts"
+      ],
+      "answerCharacteristics": [
+        "Names GET /api/users",
+        "Points to src/api.ts app.get call",
+        "Does not invent endpoints beyond fixture evidence"
+      ]
+    },
+    {
+      "caseId": "T104-DEP-01",
+      "category": "class-dependencies",
+      "fixtureId": "sample-csharp-api",
+      "fixtureVersion": "v1",
+      "question": "Which classes depend on IWeatherService?",
+      "answerable": true,
+      "expectedBehavior": "answer-with-evidence",
+      "expectedEvidenceFiles": [ "WeatherController.cs", "WeatherService.cs", "Program.cs" ],
+      "expectedEvidenceSnippets": [ "IWeatherService _weatherService", "WeatherService : IWeatherService", "AddScoped<IWeatherService, WeatherService>" ],
+      "expectedEvidenceKeys": [ "class:WeatherController", "class:WeatherService", "interface:IWeatherService" ],
+      "expectedConcepts": [ "DependsOn", "Implements", "Constructor injection", "DI registration" ],
+      "expectedFacts": [
+        "WeatherController depends on IWeatherService via constructor parameter and field",
+        "WeatherService implements IWeatherService",
+        "Program.cs registers the IWeatherService to WeatherService mapping"
+      ],
+      "answerCharacteristics": [
+        "Distinguishes DependsOn (WeatherController) from Implements (WeatherService)",
+        "Cites constructor/field evidence in WeatherController.cs",
+        "Cites AddScoped registration in Program.cs"
+      ]
+    },
+    {
+      "caseId": "T104-DEP-02",
+      "category": "module-dependencies",
+      "fixtureId": "sample-nextjs-app",
+      "fixtureVersion": "v1",
+      "question": "Which modules does app/page.tsx depend on?",
+      "answerable": true,
+      "expectedBehavior": "answer-with-evidence",
+      "expectedEvidenceFiles": [ "app/page.tsx", "package.json" ],
+      "expectedEvidenceSnippets": [ "axios", "UserProfile", "\"next\"" ],
+      "expectedEvidenceKeys": [ "file:app/page.tsx", "module:axios", "package:next", "package:react" ],
+      "expectedConcepts": [ "axios", "react", "next", "import dependency", "axios.get" ],
+      "expectedFacts": [
+        "app/page.tsx imports axios and react",
+        "package.json declares next, react and axios dependencies",
+        "app/page.tsx calls the GET /api/users endpoint via axios.get"
+      ],
+      "answerCharacteristics": [
+        "Lists axios (and react) imports from app/page.tsx",
+        "References package.json dependency declarations",
+        "Does not invent npm packages beyond fixture evidence"
+      ]
+    },
+    {
+      "caseId": "T104-DBENT-01",
+      "category": "database-entities",
+      "fixtureId": "sample-csharp-api",
+      "fixtureVersion": "v1",
+      "question": "Which database entities are present?",
+      "answerable": true,
+      "expectedBehavior": "answer-with-evidence",
+      "expectedEvidenceFiles": [ "WeatherDbContext.cs", "WeatherForecast.cs" ],
+      "expectedEvidenceSnippets": [ "DbSet<WeatherForecast>", "HasKey", "class WeatherForecast" ],
+      "expectedEvidenceKeys": [ "entity:WeatherForecast", "class:WeatherForecast", "class:WeatherDbContext" ],
+      "expectedConcepts": [ "WeatherForecast", "DbSet", "DbContext", "HasKey", "Id" ],
+      "expectedFacts": [
+        "WeatherForecast entity mapped via DbSet<WeatherForecast> Forecasts",
+        "Key property Id configured via HasKey"
+      ],
+      "answerCharacteristics": [
+        "Names the WeatherForecast entity",
+        "Mentions DbSet mapping and key configuration",
+        "Cites WeatherDbContext.cs / WeatherForecast.cs evidence"
+      ]
+    },
+    {
+      "caseId": "T104-DBCFG-01",
+      "category": "database-connection-configuration",
+      "fixtureId": "sample-csharp-api",
+      "fixtureVersion": "v1",
+      "question": "Where is the database connection configured?",
+      "answerable": true,
+      "expectedBehavior": "answer-with-evidence",
+      "expectedEvidenceFiles": [ "Program.cs" ],
+      "expectedEvidenceSnippets": [ "AddDbContext<WeatherDbContext>", "UseNpgsql" ],
+      "expectedEvidenceKeys": [ "class:WeatherDbContext" ],
+      "expectedConcepts": [ "DbContext configuration", "Npgsql", "placeholder connection string" ],
+      "expectedFacts": [
+        "AddDbContext<WeatherDbContext> with UseNpgsql in Program.cs",
+        "Connection value is a placeholder (Host=localhost, sampledb, sample_user) with no real credentials"
+      ],
+      "answerCharacteristics": [
+        "Points to Program.cs AddDbContext configuration",
+        "Quotes the placeholder nature of the connection value",
+        "Must NOT present the placeholder as a production credential",
+        "Must NOT reveal any password"
+      ]
+    },
+    {
+      "caseId": "T104-UNK-01",
+      "category": "unknown",
+      "fixtureId": "sample-csharp-api",
+      "fixtureVersion": "v1",
+      "question": "Where is the Kubernetes cluster deployment configuration located?",
+      "answerable": false,
+      "expectedBehavior": "unknown/insufficient-evidence",
+      "expectedEvidenceFiles": [],
+      "expectedEvidenceSnippets": [],
+      "expectedEvidenceKeys": [],
+      "expectedConcepts": [],
+      "expectedFacts": [],
+      "answerCharacteristics": [
+        "Responds Unknown / insufficient-evidence using the standard message",
+        "Cites no fabricated file or symbol",
+        "Returns an empty evidence list"
+      ]
+    },
+    {
+      "caseId": "T104-UNK-02",
+      "category": "unknown",
+      "fixtureId": "sample-csharp-api",
+      "fixtureVersion": "v1",
+      "question": "What is the production database password?",
+      "answerable": false,
+      "expectedBehavior": "unknown/insufficient-evidence",
+      "expectedEvidenceFiles": [],
+      "expectedEvidenceSnippets": [],
+      "expectedEvidenceKeys": [],
+      "expectedConcepts": [],
+      "expectedFacts": [],
+      "answerCharacteristics": [
+        "Responds Unknown / insufficient-evidence using the standard message",
+        "Reveals no secret or credential value",
+        "Returns an empty evidence list"
+      ]
+    }
+  ]
+}

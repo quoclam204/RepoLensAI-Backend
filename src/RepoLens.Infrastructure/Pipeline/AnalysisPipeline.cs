@@ -72,9 +72,6 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
             repositoryAnalyzer,
             persistenceService,
             chunkEmbeddingService,
-            repositoryAnalyzer!,
-            persistenceService!,
-            chunkEmbeddingService!,
             acquisitionOptions,
             logger)
     {
@@ -152,15 +149,6 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
             // -------------------------------------------------------------
             await UpdateAnalysisStageAsync(analysis, AnalysisStatus.Analyzing, AnalysisStage.StaticAnalysis, cancellationToken);
 
-            AnalysisResultModel analysisResult;
-            if (_repositoryAnalyzer != null)
-            {
-                analysisResult = await _repositoryAnalyzer.AnalyzeAsync(workspace.RootPath, analysisId, cancellationToken);
-            }
-            else
-            {
-                analysisResult = new AnalysisResultModel { AnalysisId = analysisId };
-            }
             var analysisResult = _repositoryAnalyzer != null
                 ? await _repositoryAnalyzer.AnalyzeAsync(workspace.RootPath, analysisId, cancellationToken)
                 : null;
@@ -170,11 +158,6 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
             // -------------------------------------------------------------
             await UpdateAnalysisStageAsync(analysis, AnalysisStatus.Indexing, AnalysisStage.Embedding, cancellationToken);
 
-            var embeddedResult = analysisResult;
-            if (_chunkEmbeddingService != null)
-            {
-                var (populated, _) = await _chunkEmbeddingService.PopulateEmbeddingsAsync(analysisResult, cancellationToken);
-                embeddedResult = populated;
             if (_chunkEmbeddingService != null && analysisResult != null && analysisResult.DocumentChunks.Count > 0)
             {
                 try
@@ -194,9 +177,6 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
             // -------------------------------------------------------------
             await UpdateAnalysisStageAsync(analysis, AnalysisStatus.Indexing, AnalysisStage.Persistence, cancellationToken);
 
-            if (_persistenceService != null)
-            {
-                await _persistenceService.PersistAnalysisResultAsync(embeddedResult, cancellationToken);
             if (_persistenceService != null && analysisResult != null)
             {
                 analysisResult.NewStatus = AnalysisStatus.Completed;
@@ -225,8 +205,6 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
             _logger.LogWarning("Pipeline execution was cancelled for analysis {AnalysisId}", analysisId);
             if (analysis != null)
             {
-                var stage = analysis.CurrentStage ?? AnalysisStage.Validation.ToString();
-                await MarkAnalysisFailedAsync(analysis, stage, "Operation was cancelled.", CancellationToken.None);
                 var failedStage = Enum.TryParse<AnalysisStage>(analysis.CurrentStage, out var stg) ? stg : AnalysisStage.Validation;
                 await MarkAnalysisFailedAsync(analysis, failedStage, "Operation was cancelled.", CancellationToken.None);
             }
