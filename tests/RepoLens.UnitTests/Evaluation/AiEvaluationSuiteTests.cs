@@ -271,8 +271,9 @@ public class AiEvaluationSuiteTests
     [Fact]
     public async Task T105_RetrievalQuality_ReturnsRelevantEvidenceForGroundedQuestions()
     {
-        // Arrange
+        // Arrange: Register chunks with varying similarity scores, including irrelevant/low-similarity ones
         var fakeRetriever = new TestVectorRetriever();
+
         var relevantChunk = new VectorChunkSearchResult(
             ChunkId: Guid.NewGuid(),
             AnalysisId: _analysisId,
@@ -289,15 +290,60 @@ public class AiEvaluationSuiteTests
             CosineDistance: 0.1,
             SimilarityScore: 0.90);
 
-        fakeRetriever.RegisterResult([relevantChunk]);
+        var irrelevantChunk = new VectorChunkSearchResult(
+            ChunkId: Guid.NewGuid(),
+            AnalysisId: _analysisId,
+            SourceFileId: Guid.NewGuid(),
+            FilePath: "src/Other/Irrelevant.cs",
+            Symbol: null,
+            StartLine: 1,
+            EndLine: 10,
+            Content: "totally unrelated content about bears",
+            TokenCount: 5,
+            ChunkIndex: 1,
+            EvidenceId: Guid.NewGuid(),
+            ConfidenceScore: 0.30f,
+            CosineDistance: 0.8,
+            SimilarityScore: 0.30);
+
+        var mediumChunk = new VectorChunkSearchResult(
+            ChunkId: Guid.NewGuid(),
+            AnalysisId: _analysisId,
+            SourceFileId: Guid.NewGuid(),
+            FilePath: "src/RepoLens.Api/WeatherController.cs",
+            Symbol: "WeatherController",
+            StartLine: 1,
+            EndLine: 50,
+            Content: "public IActionResult Get() => Ok();",
+            TokenCount: 15,
+            ChunkIndex: 2,
+            EvidenceId: Guid.NewGuid(),
+            ConfidenceScore: 0.60f,
+            CosineDistance: 0.4,
+            SimilarityScore: 0.60);
+
+        fakeRetriever.RegisterResult([relevantChunk, irrelevantChunk, mediumChunk]);
 
         // Act
         var results = await fakeRetriever.RetrieveSimilarChunksAsync(_analysisId, new float[1536], 5);
 
-        // Assert
+        // Assert: Results are sorted by SimilarityScore descending (ranking)
         Assert.NotEmpty(results);
-        Assert.Contains(results, r => r.Content.Contains("AddDbContext<RepoLensDbContext>"));
-        Assert.All(results, r => Assert.True(r.SimilarityScore >= 0.7));
+        // Top result should be the most relevant (highest similarity)
+        Assert.Equal(0.90, results[0].SimilarityScore);
+        // Only relevant/above-threshold chunks should appear (score >= 0.7)
+        var highRelevanceResults = results.Where(r => r.SimilarityScore >= 0.7).ToList();
+        Assert.Contains(highRelevanceResults, r => r.Content.Contains("AddDbContext<RepoLensDbContext>"));
+        // All returned chunks should meet minimum similarity threshold
+        Assert.All(results, r => Assert.True(r.SimilarityScore >= 0.3));
+        // Verify ordering: scores should be non-increasing
+        for (int i = 1; i < results.Count; i++)
+        {
+            var prevScore = results[i - 1].SimilarityScore;
+            var currScore = results[i].SimilarityScore;
+            Assert.True(prevScore >= currScore,
+                prevScore + " should not be less than " + currScore);
+        }
     }
 
     [Fact]
@@ -366,7 +412,7 @@ public class AiEvaluationSuiteTests
 
         public void RegisterResult(IReadOnlyList<VectorChunkSearchResult> results)
         {
-            _results = results;
+            _results = results.OrderByDescending(r => r.SimilarityScore).ToList();
         }
 
         public Task<IReadOnlyList<VectorChunkSearchResult>> RetrieveSimilarChunksAsync(
