@@ -1,0 +1,25 @@
+{
+  "fixtureId": "sample-typescript-app",
+  "fixtureVersion": "v1",
+  "notes": "Frozen ground truth for T100. Pure TypeScript (non-Next.js). Semantic expectations only: node/relationship identities, evidence files and snippets. Timestamps, GUIDs and machine paths are excluded by design.",
+  "expectedProjects": [{ "name": "sample-typescript-app", "type": "Node" }],
+  "expectedNodes": [
+    { "id": "interface:User", "type": "Interface", "name": "User" },
+    { "id": "struct:UserRole", "type": "Struct", "name": "UserRole" },
+    { "id": "enum:UserStatus", "type": "Enum", "name": "UserStatus" },
+    { "id": "class:UserService", "type": "Class", "name": "UserService" },
+    { "id": "method:formatUser", "type": "Method", "name": "formatUser" },
+    { "id": "method:checkHealth", "type": "Method", "name": "checkHealth" },
+    { "id": "endpoint:get:/api/users", "type": "Endpoint", "name": "GET /api/users" },
+    { "id": "endpoint:get:/api/health", "type": "Endpoint", "name": "GET /api/health" }
+  ],
+  "expectedRelationships": [
+    { "type": "DependsOn", "sourceId": "project:sample-typescript-app", "targetId": "package:express" },
+    { "type": "DependsOn", "sourceId": "file:src/userService.ts", "targetId": "module:./models" },
+    { "type": "DependsOn", "sourceId": "file:src/api.ts", "targetId": "module:express" },
+    { "type": "Exposes", "sourceId": "file:src/api.ts", "targetId": "endpoint:get:/api/users" }
+  ],
+  "expectedEvidenceFiles": [ "package.json", "src/models.ts", "src/userService.ts", "src/api.ts" ],
+  "expectedEvidenceSnippets": [ "interface User", "class UserService", "app.get" ],
+  "expectedErrorCount": 0
+}

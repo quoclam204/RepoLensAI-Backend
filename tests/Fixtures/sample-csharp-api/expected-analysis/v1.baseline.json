@@ -1,0 +1,30 @@
+{
+  "fixtureId": "sample-csharp-api",
+  "fixtureVersion": "v1",
+  "notes": "Frozen ground truth for T100. Semantic expectations only: node/relationship identities, evidence files and snippets. Timestamps, GUIDs and machine paths are excluded by design.",
+  "expectedProjects": [{ "name": "sample-csharp-api", "type": "CSharp" }],
+  "expectedNodes": [
+    { "id": "class:WeatherForecast", "type": "Class", "name": "WeatherForecast" },
+    { "id": "interface:IWeatherService", "type": "Interface", "name": "IWeatherService" },
+    { "id": "class:WeatherService", "type": "Class", "name": "WeatherService" },
+    { "id": "class:WeatherController", "type": "Class", "name": "WeatherController" },
+    { "id": "class:WeatherDbContext", "type": "Class", "name": "WeatherDbContext" },
+    { "id": "entity:WeatherForecast", "type": "DatabaseEntity", "name": "WeatherForecast" },
+    { "id": "endpoint:get:/api/Weather", "type": "Endpoint", "name": "GET /api/Weather" },
+    { "id": "endpoint:post:/api/Weather", "type": "Endpoint", "name": "POST /api/Weather" }
+  ],
+  "expectedRelationships": [
+    { "type": "Implements", "sourceId": "class:WeatherService", "targetId": "interface:IWeatherService" },
+    { "type": "DependsOn", "sourceId": "class:WeatherController", "targetId": "interface:IWeatherService" },
+    { "type": "Exposes", "sourceId": "class:WeatherController", "targetId": "endpoint:get:/api/Weather" },
+    { "type": "Exposes", "sourceId": "class:WeatherController", "targetId": "endpoint:post:/api/Weather" },
+    { "type": "MapsTo", "sourceId": "class:WeatherDbContext", "targetId": "entity:WeatherForecast" }
+  ],
+  "expectedEvidenceFiles": [ "Program.cs", "WeatherController.cs", "WeatherDbContext.cs" ],
+  "expectedEvidenceSnippets": [
+    "AddDbContext<WeatherDbContext>",
+    "AddAuthentication",
+    "[Authorize]"
+  ],
+  "expectedErrorCount": 0
+}
