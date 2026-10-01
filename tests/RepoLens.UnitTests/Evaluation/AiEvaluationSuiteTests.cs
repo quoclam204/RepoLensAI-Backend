@@ -349,16 +349,18 @@ public class AiEvaluationSuiteTests
     [Fact]
     public async Task T106_AnswerGrounding_ValidatesSupportedClaimsAndCalculatesConfidence()
     {
-        // Arrange
+        // Arrange: real T100 evidence from tests/Fixtures/sample-csharp-api/WeatherController.cs
+        // (GetAll method: [Authorize] + [HttpGet] + GetAll + GetForecastsAsync).
+        // T106 scope: answer grounding only, NOT end-to-end vector retrieval.
         var chunk = new VectorChunkSearchResult(
             ChunkId: Guid.NewGuid(),
             AnalysisId: _analysisId,
             SourceFileId: Guid.NewGuid(),
-            FilePath: "src/Controllers/WeatherController.cs",
-            Symbol: "WeatherController.Get",
-            StartLine: 15,
-            EndLine: 25,
-            Content: "[HttpGet] public IActionResult Get() => Ok();",
+            FilePath: "WeatherController.cs",
+            Symbol: "WeatherController.GetAll",
+            StartLine: 19,
+            EndLine: 24,
+            Content: "[Authorize] [HttpGet] public async Task<IActionResult> GetAll() { return Ok(await _weatherService.GetForecastsAsync()); }",
             TokenCount: 15,
             ChunkIndex: 0,
             EvidenceId: Guid.NewGuid(),
@@ -369,7 +371,7 @@ public class AiEvaluationSuiteTests
         var validator = new AiEvidenceValidator();
         var calculator = new AiConfidenceCalculator();
 
-        var candidateAnswer = "The system exposes an HTTP GET endpoint at /api/Weather in WeatherController.";
+        var candidateAnswer = "The `WeatherController` exposes `GetAll` in `WeatherController.cs` with `[HttpGet]` and `[Authorize]`.";
 
         // Act
         var validation = await validator.ValidateAnswerAsync(candidateAnswer, [chunk]);
@@ -378,7 +380,132 @@ public class AiEvaluationSuiteTests
 
         // Assert
         Assert.True(validation.IsValid);
-        Assert.NotEqual(AiConfidenceLevel.Unknown, confidenceResult.Level);
+        Assert.Equal(AnswerValidationStatus.FullySupported, validation.Status);
+        Assert.Empty(validation.UnsupportedClaims);
+        Assert.Empty(validation.RejectedCitations);
+        Assert.All(validation.ClaimDetails, c => Assert.True(c.IsSupported));
+        Assert.Contains(validation.ValidatedEvidence, e =>
+            e.File == "WeatherController.cs" && e.Symbol == "WeatherController.GetAll");
+        Assert.Contains(validation.ValidatedEvidence, e =>
+            e.StartLine == 19 && e.EndLine == 24);
+        Assert.Equal(AiConfidenceLevel.High, confidenceResult.Level);
+    }
+
+    [Fact]
+    public async Task T106_AnswerGrounding_UnsupportedClaim_IsPartiallySupportedAndNotHighConfidence()
+    {
+        // Arrange: same real T100 chunk, but the answer adds a claim with no grounding.
+        var chunk = new VectorChunkSearchResult(
+            ChunkId: Guid.NewGuid(),
+            AnalysisId: _analysisId,
+            SourceFileId: Guid.NewGuid(),
+            FilePath: "WeatherController.cs",
+            Symbol: "WeatherController.GetAll",
+            StartLine: 19,
+            EndLine: 24,
+            Content: "[Authorize] [HttpGet] public async Task<IActionResult> GetAll() { return Ok(await _weatherService.GetForecastsAsync()); }",
+            TokenCount: 15,
+            ChunkIndex: 0,
+            EvidenceId: Guid.NewGuid(),
+            ConfidenceScore: 0.9f,
+            CosineDistance: 0.05,
+            SimilarityScore: 0.95);
+
+        var validator = new AiEvidenceValidator();
+        var calculator = new AiConfidenceCalculator();
+
+        var candidateAnswer = "The `WeatherController` exposes `GetAll` in `WeatherController.cs` with `[HttpGet]` and `[Authorize]`. It also persists to `MongoDatabase.cs` using `SaveToMongoCluster`.";
+
+        // Act
+        var validation = await validator.ValidateAnswerAsync(candidateAnswer, [chunk]);
+        var confidenceResult = calculator.EvaluateConfidence(new ConfidenceEvaluationRequest(
+            "What endpoints exist?", candidateAnswer, [chunk], validation));
+
+        // Assert: validator detects the ungrounded second sentence per its actual contract
+        // (PartiallySupported + IsValid false + uncertainty-tagged answer under default options).
+        Assert.False(validation.IsValid);
+        Assert.Equal(AnswerValidationStatus.PartiallySupported, validation.Status);
+        Assert.NotEqual(AnswerValidationStatus.FullySupported, validation.Status);
+        Assert.Single(validation.UnsupportedClaims);
+        Assert.Contains("MongoDatabase.cs", validation.UnsupportedClaims[0]);
+        Assert.Contains(AnswerValidationOptions.Default.UncertaintyPrefix, validation.ValidatedAnswer);
+        Assert.NotEqual(AiConfidenceLevel.High, confidenceResult.Level);
+    }
+
+    [Fact]
+    public async Task T106_AnswerGrounding_InsufficientEvidence_ReturnsCanonicalContract()
+    {
+        // Arrange: empty evidence with a factual answer asserting repository facts.
+        var validator = new AiEvidenceValidator();
+        var calculator = new AiConfidenceCalculator();
+
+        var candidateAnswer = "The system exposes an HTTP GET endpoint at /api/Weather in WeatherController.";
+
+        // Act
+        var validation = await validator.ValidateAnswerAsync(candidateAnswer, []);
+        var confidenceResult = calculator.EvaluateConfidence(new ConfidenceEvaluationRequest(
+            "What endpoints exist?", candidateAnswer, [], validation));
+
+        // Assert: actual zero-chunk contract (no new contract invented).
+        Assert.False(validation.IsValid);
+        Assert.Equal(AnswerValidationStatus.InsufficientEvidence, validation.Status);
+        Assert.Equal(InsufficientEvidenceResponse.DefaultMessage, validation.ValidatedAnswer);
+        Assert.Empty(validation.ValidatedEvidence);
+        Assert.NotEmpty(validation.UnsupportedClaims);
+        Assert.True(InsufficientEvidenceResponse.RequiresInsufficientEvidenceResponse(validation));
+        // Note: AiConfidenceCalculator returns Low (0.1) for zero chunks; Unknown is the
+        // RagService-level mapping covered by T107, not the calculator-level contract.
+        Assert.Equal(AiConfidenceLevel.Low, confidenceResult.Level);
+    }
+
+    [Fact]
+    public async Task T106_AnswerGrounding_IncorrectEvidenceMapping_IsNotFullySupported()
+    {
+        // Arrange: file exists in evidence but the cited symbol does not.
+        var chunk = new VectorChunkSearchResult(
+            ChunkId: Guid.NewGuid(),
+            AnalysisId: _analysisId,
+            SourceFileId: Guid.NewGuid(),
+            FilePath: "WeatherController.cs",
+            Symbol: "WeatherController.GetAll",
+            StartLine: 19,
+            EndLine: 24,
+            Content: "[Authorize] [HttpGet] public async Task<IActionResult> GetAll() { return Ok(await _weatherService.GetForecastsAsync()); }",
+            TokenCount: 15,
+            ChunkIndex: 0,
+            EvidenceId: Guid.NewGuid(),
+            ConfidenceScore: 0.9f,
+            CosineDistance: 0.05,
+            SimilarityScore: 0.95);
+
+        var validator = new AiEvidenceValidator();
+        var calculator = new AiConfidenceCalculator();
+
+        var wrongCitation = new AiEvidenceItem
+        {
+            File = "WeatherController.cs",
+            Symbol = "DeleteUserAccount",
+            StartLine = 1,
+            EndLine = 10,
+            Reason = "T106 test citation with ungrounded symbol"
+        };
+
+        var candidateAnswer = "The `WeatherController` implements `DeleteUserAccount` in `WeatherController.cs`.";
+
+        // Act
+        var validation = await validator.ValidateAnswerAsync(candidateAnswer, [chunk], [wrongCitation]);
+        var confidenceResult = calculator.EvaluateConfidence(new ConfidenceEvaluationRequest(
+            "What endpoints exist?", candidateAnswer, [chunk], validation));
+
+        // Assert: wrong symbol mapping is rejected, never FullySupported.
+        Assert.False(validation.IsValid);
+        Assert.NotEqual(AnswerValidationStatus.FullySupported, validation.Status);
+        Assert.Equal(AnswerValidationStatus.Unsupported, validation.Status);
+        Assert.Single(validation.RejectedCitations);
+        Assert.Equal("DeleteUserAccount", validation.RejectedCitations[0].Symbol);
+        Assert.NotEmpty(validation.UnsupportedClaims);
+        Assert.Equal(InsufficientEvidenceResponse.DefaultMessage, validation.ValidatedAnswer);
+        Assert.Equal(AiConfidenceLevel.Low, confidenceResult.Level);
     }
 
     [Fact]
