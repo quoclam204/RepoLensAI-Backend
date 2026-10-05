@@ -46,6 +46,13 @@ public class ArchitectureController : ControllerBase
             return Ok(archifyDoc);
         }
 
+        if (string.Equals(format, "v3", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(format, "archify-v3", StringComparison.OrdinalIgnoreCase))
+        {
+            var archifyV3Doc = _archifyAdapter.ConvertToArchifyV3(architecture);
+            return Ok(archifyV3Doc);
+        }
+
         return Ok(architecture);
     }
 
@@ -69,4 +76,76 @@ public class ArchitectureController : ControllerBase
         var archifyDoc = _archifyAdapter.ConvertFromArchitectureResponse(architecture);
         return Ok(archifyDoc);
     }
+
+    /// <summary>
+    /// Returns the official Archify V3 diagram specification document with swimlane regions and component semantics.
+    /// </summary>
+    [HttpGet("v3")]
+    [ProducesResponseType(typeof(RepoLens.Application.Models.Archify.ArchifyV3Document), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetArchifyV3(Guid id, CancellationToken ct)
+    {
+        var architecture = await _architectureService.GetArchitectureAsync(id, ct);
+        if (architecture == null)
+        {
+            return NotFound(new ErrorResponse(new ErrorDetail(
+                Code: "ANALYSIS_NOT_FOUND",
+                Message: $"The requested analysis '{id}' does not exist."
+            )));
+        }
+
+        var archifyV3 = _archifyAdapter.ConvertToArchifyV3(architecture);
+        return Ok(archifyV3);
+    }
+
+    /// <summary>
+    /// Generates a standalone, portable interactive HTML diagram matching the Archify viewer.
+    /// </summary>
+    [HttpGet("export/html")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ExportArchifyHtml(Guid id, [FromQuery] string theme = "dark", CancellationToken ct = default)
+    {
+        var architecture = await _architectureService.GetArchitectureAsync(id, ct);
+        if (architecture == null)
+        {
+            return NotFound(new ErrorResponse(new ErrorDetail(
+                Code: "ANALYSIS_NOT_FOUND",
+                Message: $"The requested analysis '{id}' does not exist."
+            )));
+        }
+
+        var archifyV3 = _archifyAdapter.ConvertToArchifyV3(architecture);
+        var html = _archifyAdapter.GenerateStandaloneHtml(archifyV3, theme);
+        return Content(html, "text/html; charset=utf-8");
+    }
+
+    /// <summary>
+    /// Traces the shortest path between two components in the architecture knowledge graph.
+    /// </summary>
+    [HttpGet("trace")]
+    [ProducesResponseType(typeof(ArchitectureTraceResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> TraceRoute(Guid id, [FromQuery] string from, [FromQuery] string to, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(from) || string.IsNullOrWhiteSpace(to))
+        {
+            return BadRequest(new ErrorResponse(new ErrorDetail(
+                Code: "INVALID_PARAMETERS",
+                Message: "Both 'from' and 'to' node identifiers are required."
+            )));
+        }
+
+        var traceResult = await _architectureService.TracePathAsync(id, from, to, ct);
+        if (traceResult == null)
+        {
+            return NotFound(new ErrorResponse(new ErrorDetail(
+                Code: "ANALYSIS_NOT_FOUND",
+                Message: $"The requested analysis '{id}' does not exist."
+            )));
+        }
+
+        return Ok(traceResult);
+    }
 }
+

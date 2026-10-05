@@ -25,4 +25,15 @@ public interface IArchifyAdapter
     /// Converts an ArchitectureResponse DTO into an Archify C4 document for frontend consumption.
     /// </summary>
     ArchifyDocument ConvertFromArchitectureResponse(RepoLens.Application.DTOs.Architecture.ArchitectureResponse architectureResponse);
+
+    /// <summary>
+    /// Converts an ArchitectureResponse DTO into an official Archify V3 specification document.
+    /// </summary>
+    ArchifyV3Document ConvertToArchifyV3(RepoLens.Application.DTOs.Architecture.ArchitectureResponse architectureResponse, string? systemTitle = null);
+
+    /// <summary>
+    /// Generates a standalone, self-contained interactive Archify HTML visualization.
+    /// </summary>
+    string GenerateStandaloneHtml(ArchifyV3Document doc, string theme = "dark");
 }
+
