@@ -13,36 +13,13 @@ public static class DependencyInjection
     {
         var connectionString = configuration.GetConnectionString("Postgres");
 
-        bool hasVectorExtension = false;
-        if (!string.IsNullOrWhiteSpace(connectionString))
-        {
-            try
-            {
-                using var conn = new Npgsql.NpgsqlConnection(connectionString);
-                conn.Open();
-                using var cmd = conn.CreateCommand();
-                cmd.CommandText = "SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'vector');";
-                var result = cmd.ExecuteScalar();
-                if (result is bool b && b)
-                {
-                    hasVectorExtension = true;
-                }
-            }
-            catch
-            {
-                hasVectorExtension = false;
-            }
-        }
-        RepoLensDbContext.HasPgvectorExtension = hasVectorExtension;
+        RepoLensDbContext.HasPgvectorExtension = true;
 
         services.AddDbContext<RepoLensDbContext>(options =>
         {
             options.UseNpgsql(connectionString, b =>
             {
-                if (hasVectorExtension)
-                {
-                    b.UseVector();
-                }
+                b.UseVector();
                 b.MigrationsAssembly(typeof(RepoLensDbContext).Assembly.FullName);
             });
             options.ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning));

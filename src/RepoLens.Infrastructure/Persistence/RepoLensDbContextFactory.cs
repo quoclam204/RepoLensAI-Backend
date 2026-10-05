@@ -44,15 +44,12 @@ public class RepoLensDbContextFactory : IDesignTimeDbContextFactory<RepoLensDbCo
             hasVector = false;
         }
 
-        RepoLensDbContext.HasPgvectorExtension = hasVector;
+        RepoLensDbContext.HasPgvectorExtension = true;
 
         var optionsBuilder = new DbContextOptionsBuilder<RepoLensDbContext>();
         optionsBuilder.UseNpgsql(connectionString, b =>
         {
-            if (hasVector)
-            {
-                b.UseVector();
-            }
+            b.UseVector();
             b.MigrationsAssembly(typeof(RepoLensDbContext).Assembly.FullName);
         });
         optionsBuilder.ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning));
