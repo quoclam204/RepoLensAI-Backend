@@ -10,16 +10,28 @@
 
 ---
 
-## 2. Supported Project Types
+## 2. Supported Repository Classification Types (3-Layer Detection Engine)
 
-1. **.NET Solution / Projects**:
-   - Solution files (`.sln`)
-   - C# Projects (`.csproj`)
-   - ASP.NET Core Web APIs (Minimal APIs and Controller-based `[ApiController]`)
-   - Entity Framework Core (`DbContext`, `DbSet<T>`, Fluent API configurations)
-2. **Node.js / Frontend Projects**:
-   - `package.json` manifest parsing (dependencies and devDependencies without running `npm install`)
-   - Next.js / React projects (`tsconfig.json`, `app/` routes, `pages/`)
+RepoLens AI tự động phân loại repository bằng 3 lớp bằng chứng (File markers, Code patterns, Component relationships):
+
+1. **ApiBackend**:
+   - Backend APIs: ASP.NET Core Web API, Express, NestJS, Spring Boot, FastAPI, Go Gin.
+   - Sơ đồ tương ứng: `architecture` (Phân tầng Controller → Service → Repository), `endpoints` (REST routes), `erd` (Database Entity Relationship Diagram nếu có DbContext).
+2. **Frontend**:
+   - Single-page hoặc server-rendered web applications: React, Next.js, Vue, Angular, Svelte, Vite.
+   - Sơ đồ tương ứng: `architecture`, `routes` (Bản đồ route), `components` (Cây phân cấp component).
+3. **Monorepo**:
+   - Kho chứa đa dự án / đa không gian làm việc: pnpm workspaces, Lerna, Nx, Turborepo, .NET sln đa project độc lập.
+   - Sơ đồ tương ứng: `overview` (Toàn cảnh hệ thống), `workspaces` (Các workspace), `dependencies` (Quan hệ phụ thuộc liên package).
+4. **Library**:
+   - Thư viện / Package tái sử dụng (NuGet class library, npm package, SDK).
+   - Sơ đồ tương ứng: `architecture`, `classes` (Namespace & Classes), `dependencies`.
+5. **Cli**:
+   - Ứng dụng dòng lệnh console (System.CommandLine, CommandLineApplication, Commander, Cobra).
+   - Sơ đồ tương ứng: `architecture`, `commands` (Cây lệnh & flags), `callflow` (Luồng thực thi).
+6. **Unsupported**:
+   - Repository không chứa các file marker hoặc pattern mã nguồn nhận diện được.
+   - Sơ đồ tương ứng: `overview` (Thông báo giải thích thiếu bằng chứng).
 
 ---
 

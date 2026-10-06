@@ -216,7 +216,12 @@ public sealed class AnalysisPipeline : IAnalysisPipeline
             var stage = analysis?.CurrentStage ?? AnalysisStage.Validation.ToString();
             if (analysis != null)
             {
-                await MarkAnalysisFailedAsync(analysis, stage, $"Pipeline execution failed: {ex.Message}", CancellationToken.None);
+                var errorMsg = ex switch
+                {
+                    DbUpdateException dbEx when dbEx.InnerException != null => $"Database save failed: {dbEx.InnerException.Message}",
+                    _ => ex.InnerException != null ? $"{ex.Message} -> {ex.InnerException.Message}" : ex.Message
+                };
+                await MarkAnalysisFailedAsync(analysis, stage, $"Pipeline execution failed: {errorMsg}", CancellationToken.None);
             }
             var failedStage = Enum.TryParse<AnalysisStage>(stage, out var parsed) ? parsed : AnalysisStage.Validation;
             return AnalysisPipelineResult.Failed(failedStage, ex.Message);

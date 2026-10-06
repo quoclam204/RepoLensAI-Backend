@@ -102,5 +102,11 @@ public class ArchitectureControllerTests
         {
             return Task.FromResult(_response);
         }
+
+        public Task<RepoLens.Application.DTOs.Architecture.ArchitectureTraceResponse?> TracePathAsync(Guid analysisId, string fromNodeId, string toNodeId, CancellationToken ct = default)
+        {
+            return Task.FromResult<RepoLens.Application.DTOs.Architecture.ArchitectureTraceResponse?>(null);
+        }
     }
 }
+

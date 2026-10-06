@@ -127,4 +127,38 @@ public class ArchifyAdapterTests
         Assert.Equal("References", doc.System.Relationships[0].Type);
         Assert.Contains("ev:10-15", doc.System.Relationships[0].EvidenceIds);
     }
+
+    [Fact]
+    public void ConvertToArchifyV3_GeneratesValidV3SpecAndStandaloneHtml()
+    {
+        // Arrange
+        var response = new RepoLens.Application.DTOs.Architecture.ArchitectureResponse(
+            Guid.NewGuid(),
+            [
+                new("node-1", "Project", "RepoLens.Api", "src/RepoLens.Api"),
+                new("node-2", "Project", "RepoLens.Application", "src/RepoLens.Application")
+            ],
+            [
+                new("edge-1", "RepoLens.Api", "RepoLens.Application", "ProjectReference", "confirmed")
+            ]);
+
+        var adapter = new ArchifyAdapter();
+
+        // Act
+        var v3Doc = adapter.ConvertToArchifyV3(response, "Test System");
+        var html = adapter.GenerateStandaloneHtml(v3Doc, "dark");
+
+        // Assert
+        Assert.NotNull(v3Doc);
+        Assert.Equal("architecture", v3Doc.DiagramType);
+        Assert.Equal("Test System", v3Doc.Meta.Title);
+        Assert.Equal(2, v3Doc.Components.Count);
+        Assert.Single(v3Doc.Connections);
+
+        Assert.NotNull(html);
+        Assert.Contains("<!DOCTYPE html>", html);
+        Assert.Contains("Test System", html);
+        Assert.Contains("svg", html);
+    }
 }
+

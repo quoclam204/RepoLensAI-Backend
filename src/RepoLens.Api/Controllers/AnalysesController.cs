@@ -11,10 +11,14 @@ namespace RepoLens.Api.Controllers;
 public class AnalysesController : ControllerBase
 {
     private readonly IAnalysisService _analysisService;
+    private readonly IDiagramService _diagramService;
 
-    public AnalysesController(IAnalysisService analysisService)
+    public AnalysesController(
+        IAnalysisService analysisService,
+        IDiagramService diagramService)
     {
         _analysisService = analysisService;
+        _diagramService = diagramService;
     }
 
     /// <summary>
@@ -99,5 +103,18 @@ public class AnalysesController : ControllerBase
         }
 
         return Ok(overview);
+    }
+
+    /// <summary>
+    /// Returns repository type detection and classification with 3-layer evidence (Giai đoạn 1 & 2).
+    /// </summary>
+    [HttpGet("{id:guid}/classification")]
+    [ProducesResponseType(typeof(RepoLens.Application.Models.Classification.RepositoryClassification), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> GetClassification(Guid id, CancellationToken ct)
+    {
+        var classification = await _diagramService.GetClassificationAsync(id, ct);
+        return Ok(classification);
     }
 }

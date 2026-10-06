@@ -13,36 +13,13 @@ public static class DependencyInjection
     {
         var connectionString = configuration.GetConnectionString("Postgres");
 
-        bool hasVectorExtension = false;
-        if (!string.IsNullOrWhiteSpace(connectionString))
-        {
-            try
-            {
-                using var conn = new Npgsql.NpgsqlConnection(connectionString);
-                conn.Open();
-                using var cmd = conn.CreateCommand();
-                cmd.CommandText = "SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'vector');";
-                var result = cmd.ExecuteScalar();
-                if (result is bool b && b)
-                {
-                    hasVectorExtension = true;
-                }
-            }
-            catch
-            {
-                hasVectorExtension = false;
-            }
-        }
-        RepoLensDbContext.HasPgvectorExtension = hasVectorExtension;
+        RepoLensDbContext.HasPgvectorExtension = true;
 
         services.AddDbContext<RepoLensDbContext>(options =>
         {
             options.UseNpgsql(connectionString, b =>
             {
-                if (hasVectorExtension)
-                {
-                    b.UseVector();
-                }
+                b.UseVector();
                 b.MigrationsAssembly(typeof(RepoLensDbContext).Assembly.FullName);
             });
             options.ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning));
@@ -88,6 +65,8 @@ public static class DependencyInjection
         services.AddScoped<RepoLens.Application.Abstractions.ISymbolService, RepoLens.Infrastructure.Services.SymbolService>();
         services.AddScoped<RepoLens.Application.Abstractions.IEvidenceService, RepoLens.Infrastructure.Services.EvidenceService>();
         services.AddScoped<RepoLens.Application.Abstractions.IAnalysisPersistenceService, RepoLens.Infrastructure.Services.AnalysisPersistenceService>();
+        services.AddScoped<RepoLens.Application.Abstractions.IRepositoryTypeDetector, RepoLens.Infrastructure.Services.RepositoryTypeDetector>();
+        services.AddScoped<RepoLens.Application.Abstractions.IDiagramService, RepoLens.Infrastructure.Services.DiagramService>();
         // T085: chunk embedding application service (explicit composition Analyze -> Embed -> Persist).
         services.AddScoped<RepoLens.Application.Abstractions.AI.IChunkEmbeddingService, RepoLens.Application.Services.ChunkEmbeddingService>();
         services.AddScoped<RepoLens.Application.Abstractions.IRepositoryAnalyzer, RepoLens.Infrastructure.Adapters.Analysis.RoslynRepositoryAnalyzerAdapter>();

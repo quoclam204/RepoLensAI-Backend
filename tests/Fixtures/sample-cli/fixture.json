@@ -1,0 +1,6 @@
+{
+  "id": "sample-cli",
+  "version": "v1",
+  "language": "csharp",
+  "description": "Minimal C# console/CLI application fixture. Has entry point (Program.Main) but no API controllers."
+}

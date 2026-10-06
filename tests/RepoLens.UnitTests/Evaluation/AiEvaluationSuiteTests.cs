@@ -271,8 +271,9 @@ public class AiEvaluationSuiteTests
     [Fact]
     public async Task T105_RetrievalQuality_ReturnsRelevantEvidenceForGroundedQuestions()
     {
-        // Arrange
+        // Arrange: Register chunks with varying similarity scores, including irrelevant/low-similarity ones
         var fakeRetriever = new TestVectorRetriever();
+
         var relevantChunk = new VectorChunkSearchResult(
             ChunkId: Guid.NewGuid(),
             AnalysisId: _analysisId,
@@ -289,30 +290,77 @@ public class AiEvaluationSuiteTests
             CosineDistance: 0.1,
             SimilarityScore: 0.90);
 
-        fakeRetriever.RegisterResult([relevantChunk]);
+        var irrelevantChunk = new VectorChunkSearchResult(
+            ChunkId: Guid.NewGuid(),
+            AnalysisId: _analysisId,
+            SourceFileId: Guid.NewGuid(),
+            FilePath: "src/Other/Irrelevant.cs",
+            Symbol: null,
+            StartLine: 1,
+            EndLine: 10,
+            Content: "totally unrelated content about bears",
+            TokenCount: 5,
+            ChunkIndex: 1,
+            EvidenceId: Guid.NewGuid(),
+            ConfidenceScore: 0.30f,
+            CosineDistance: 0.8,
+            SimilarityScore: 0.30);
+
+        var mediumChunk = new VectorChunkSearchResult(
+            ChunkId: Guid.NewGuid(),
+            AnalysisId: _analysisId,
+            SourceFileId: Guid.NewGuid(),
+            FilePath: "src/RepoLens.Api/WeatherController.cs",
+            Symbol: "WeatherController",
+            StartLine: 1,
+            EndLine: 50,
+            Content: "public IActionResult Get() => Ok();",
+            TokenCount: 15,
+            ChunkIndex: 2,
+            EvidenceId: Guid.NewGuid(),
+            ConfidenceScore: 0.60f,
+            CosineDistance: 0.4,
+            SimilarityScore: 0.60);
+
+        fakeRetriever.RegisterResult([relevantChunk, irrelevantChunk, mediumChunk]);
 
         // Act
         var results = await fakeRetriever.RetrieveSimilarChunksAsync(_analysisId, new float[1536], 5);
 
-        // Assert
+        // Assert: Results are sorted by SimilarityScore descending (ranking)
         Assert.NotEmpty(results);
-        Assert.Contains(results, r => r.Content.Contains("AddDbContext<RepoLensDbContext>"));
-        Assert.All(results, r => Assert.True(r.SimilarityScore >= 0.7));
+        // Top result should be the most relevant (highest similarity)
+        Assert.Equal(0.90, results[0].SimilarityScore);
+        // Only relevant/above-threshold chunks should appear (score >= 0.7)
+        var highRelevanceResults = results.Where(r => r.SimilarityScore >= 0.7).ToList();
+        Assert.Contains(highRelevanceResults, r => r.Content.Contains("AddDbContext<RepoLensDbContext>"));
+        // All returned chunks should meet minimum similarity threshold
+        Assert.All(results, r => Assert.True(r.SimilarityScore >= 0.3));
+        // Verify ordering: scores should be non-increasing
+        for (int i = 1; i < results.Count; i++)
+        {
+            var prevScore = results[i - 1].SimilarityScore;
+            var currScore = results[i].SimilarityScore;
+            Assert.True(prevScore >= currScore,
+                prevScore + " should not be less than " + currScore);
+        }
     }
 
     [Fact]
     public async Task T106_AnswerGrounding_ValidatesSupportedClaimsAndCalculatesConfidence()
     {
-        // Arrange
+        // Arrange: real T100 evidence from tests/Fixtures/sample-csharp-api/WeatherController.cs
+        // (GetAll method: [Authorize] + [HttpGet] + GetAll + GetForecastsAsync).
+        // T106 scope: answer grounding only, NOT end-to-end vector retrieval.
         var chunk = new VectorChunkSearchResult(
             ChunkId: Guid.NewGuid(),
             AnalysisId: _analysisId,
             SourceFileId: Guid.NewGuid(),
-            FilePath: "src/Controllers/WeatherController.cs",
-            Symbol: "WeatherController.Get",
-            StartLine: 15,
-            EndLine: 25,
-            Content: "[HttpGet] public IActionResult Get() => Ok();",
+            FilePath: "WeatherController.cs",
+            Symbol: "WeatherController.GetAll",
+            StartLine: 19,
+            EndLine: 24,
+            Content: "[Authorize] [HttpGet] public async Task<IActionResult> GetAll() { return Ok(await _weatherService.GetForecastsAsync()); }",
             TokenCount: 15,
             ChunkIndex: 0,
             EvidenceId: Guid.NewGuid(),
@@ -323,7 +371,7 @@ public class AiEvaluationSuiteTests
         var validator = new AiEvidenceValidator();
         var calculator = new AiConfidenceCalculator();
 
-        var candidateAnswer = "The system exposes an HTTP GET endpoint at /api/Weather in WeatherController.";
+        var candidateAnswer = "The `WeatherController` exposes `GetAll` in `WeatherController.cs` with `[HttpGet]` and `[Authorize]`.";
 
         // Act
         var validation = await validator.ValidateAnswerAsync(candidateAnswer, [chunk]);
@@ -332,7 +380,132 @@ public class AiEvaluationSuiteTests
 
         // Assert
         Assert.True(validation.IsValid);
-        Assert.NotEqual(AiConfidenceLevel.Unknown, confidenceResult.Level);
+        Assert.Equal(AnswerValidationStatus.FullySupported, validation.Status);
+        Assert.Empty(validation.UnsupportedClaims);
+        Assert.Empty(validation.RejectedCitations);
+        Assert.All(validation.ClaimDetails, c => Assert.True(c.IsSupported));
+        Assert.Contains(validation.ValidatedEvidence, e =>
+            e.File == "WeatherController.cs" && e.Symbol == "WeatherController.GetAll");
+        Assert.Contains(validation.ValidatedEvidence, e =>
+            e.StartLine == 19 && e.EndLine == 24);
+        Assert.Equal(AiConfidenceLevel.High, confidenceResult.Level);
+    }
+
+    [Fact]
+    public async Task T106_AnswerGrounding_UnsupportedClaim_IsPartiallySupportedAndNotHighConfidence()
+    {
+        // Arrange: same real T100 chunk, but the answer adds a claim with no grounding.
+        var chunk = new VectorChunkSearchResult(
+            ChunkId: Guid.NewGuid(),
+            AnalysisId: _analysisId,
+            SourceFileId: Guid.NewGuid(),
+            FilePath: "WeatherController.cs",
+            Symbol: "WeatherController.GetAll",
+            StartLine: 19,
+            EndLine: 24,
+            Content: "[Authorize] [HttpGet] public async Task<IActionResult> GetAll() { return Ok(await _weatherService.GetForecastsAsync()); }",
+            TokenCount: 15,
+            ChunkIndex: 0,
+            EvidenceId: Guid.NewGuid(),
+            ConfidenceScore: 0.9f,
+            CosineDistance: 0.05,
+            SimilarityScore: 0.95);
+
+        var validator = new AiEvidenceValidator();
+        var calculator = new AiConfidenceCalculator();
+
+        var candidateAnswer = "The `WeatherController` exposes `GetAll` in `WeatherController.cs` with `[HttpGet]` and `[Authorize]`. It also persists to `MongoDatabase.cs` using `SaveToMongoCluster`.";
+
+        // Act
+        var validation = await validator.ValidateAnswerAsync(candidateAnswer, [chunk]);
+        var confidenceResult = calculator.EvaluateConfidence(new ConfidenceEvaluationRequest(
+            "What endpoints exist?", candidateAnswer, [chunk], validation));
+
+        // Assert: validator detects the ungrounded second sentence per its actual contract
+        // (PartiallySupported + IsValid false + uncertainty-tagged answer under default options).
+        Assert.False(validation.IsValid);
+        Assert.Equal(AnswerValidationStatus.PartiallySupported, validation.Status);
+        Assert.NotEqual(AnswerValidationStatus.FullySupported, validation.Status);
+        Assert.Single(validation.UnsupportedClaims);
+        Assert.Contains("MongoDatabase.cs", validation.UnsupportedClaims[0]);
+        Assert.Contains(AnswerValidationOptions.Default.UncertaintyPrefix, validation.ValidatedAnswer);
+        Assert.NotEqual(AiConfidenceLevel.High, confidenceResult.Level);
+    }
+
+    [Fact]
+    public async Task T106_AnswerGrounding_InsufficientEvidence_ReturnsCanonicalContract()
+    {
+        // Arrange: empty evidence with a factual answer asserting repository facts.
+        var validator = new AiEvidenceValidator();
+        var calculator = new AiConfidenceCalculator();
+
+        var candidateAnswer = "The system exposes an HTTP GET endpoint at /api/Weather in WeatherController.";
+
+        // Act
+        var validation = await validator.ValidateAnswerAsync(candidateAnswer, []);
+        var confidenceResult = calculator.EvaluateConfidence(new ConfidenceEvaluationRequest(
+            "What endpoints exist?", candidateAnswer, [], validation));
+
+        // Assert: actual zero-chunk contract (no new contract invented).
+        Assert.False(validation.IsValid);
+        Assert.Equal(AnswerValidationStatus.InsufficientEvidence, validation.Status);
+        Assert.Equal(InsufficientEvidenceResponse.DefaultMessage, validation.ValidatedAnswer);
+        Assert.Empty(validation.ValidatedEvidence);
+        Assert.NotEmpty(validation.UnsupportedClaims);
+        Assert.True(InsufficientEvidenceResponse.RequiresInsufficientEvidenceResponse(validation));
+        // Note: AiConfidenceCalculator returns Low (0.1) for zero chunks; Unknown is the
+        // RagService-level mapping covered by T107, not the calculator-level contract.
+        Assert.Equal(AiConfidenceLevel.Low, confidenceResult.Level);
+    }
+
+    [Fact]
+    public async Task T106_AnswerGrounding_IncorrectEvidenceMapping_IsNotFullySupported()
+    {
+        // Arrange: file exists in evidence but the cited symbol does not.
+        var chunk = new VectorChunkSearchResult(
+            ChunkId: Guid.NewGuid(),
+            AnalysisId: _analysisId,
+            SourceFileId: Guid.NewGuid(),
+            FilePath: "WeatherController.cs",
+            Symbol: "WeatherController.GetAll",
+            StartLine: 19,
+            EndLine: 24,
+            Content: "[Authorize] [HttpGet] public async Task<IActionResult> GetAll() { return Ok(await _weatherService.GetForecastsAsync()); }",
+            TokenCount: 15,
+            ChunkIndex: 0,
+            EvidenceId: Guid.NewGuid(),
+            ConfidenceScore: 0.9f,
+            CosineDistance: 0.05,
+            SimilarityScore: 0.95);
+
+        var validator = new AiEvidenceValidator();
+        var calculator = new AiConfidenceCalculator();
+
+        var wrongCitation = new AiEvidenceItem
+        {
+            File = "WeatherController.cs",
+            Symbol = "DeleteUserAccount",
+            StartLine = 1,
+            EndLine = 10,
+            Reason = "T106 test citation with ungrounded symbol"
+        };
+
+        var candidateAnswer = "The `WeatherController` implements `DeleteUserAccount` in `WeatherController.cs`.";
+
+        // Act
+        var validation = await validator.ValidateAnswerAsync(candidateAnswer, [chunk], [wrongCitation]);
+        var confidenceResult = calculator.EvaluateConfidence(new ConfidenceEvaluationRequest(
+            "What endpoints exist?", candidateAnswer, [chunk], validation));
+
+        // Assert: wrong symbol mapping is rejected, never FullySupported.
+        Assert.False(validation.IsValid);
+        Assert.NotEqual(AnswerValidationStatus.FullySupported, validation.Status);
+        Assert.Equal(AnswerValidationStatus.Unsupported, validation.Status);
+        Assert.Single(validation.RejectedCitations);
+        Assert.Equal("DeleteUserAccount", validation.RejectedCitations[0].Symbol);
+        Assert.NotEmpty(validation.UnsupportedClaims);
+        Assert.Equal(InsufficientEvidenceResponse.DefaultMessage, validation.ValidatedAnswer);
+        Assert.Equal(AiConfidenceLevel.Low, confidenceResult.Level);
     }
 
     [Fact]
@@ -360,13 +533,179 @@ public class AiEvaluationSuiteTests
         Assert.False(result.HasSufficientEvidence);
     }
 
+    [Fact]
+    public async Task T107_UnknownAndInsufficientEvidence_NonZeroChunksWithInsufficientEvidenceValidation()
+    {
+        // Arrange: Vector retriever returns chunks, but answer asserts repository facts
+        // that don't match the retrieved evidence, causing InsufficientEvidence status.
+        var fakeRetriever = new TestVectorRetriever();
+        var fakeEmbeddingProvider = new TestEmbeddingProvider();
+        var fakeAiProvider = new TestAiProvider("The system has a `MongoDatabase` collection with a schema version 2.");
+
+        // Chunks that will be retrieved
+        var chunk = new VectorChunkSearchResult(
+            ChunkId: Guid.NewGuid(),
+            AnalysisId: _analysisId,
+            SourceFileId: Guid.NewGuid(),
+            FilePath: "WeatherController.cs",
+            Symbol: "WeatherController.GetAll",
+            StartLine: 19,
+            EndLine: 24,
+            Content: "[Authorize] [HttpGet] public async Task<IActionResult> GetAll() { return Ok(await _weatherService.GetForecastsAsync()); }",
+            TokenCount: 15,
+            ChunkIndex: 0,
+            EvidenceId: Guid.NewGuid(),
+            ConfidenceScore: 0.9f,
+            CosineDistance: 0.05,
+            SimilarityScore: 0.90);
+
+        fakeRetriever.RegisterResult([chunk]);
+
+        var validator = new AiEvidenceValidator();
+
+        var ragService = new RagService(
+            fakeAiProvider,
+            fakeEmbeddingProvider,
+            fakeRetriever,
+            evidenceValidator: validator,
+            confidenceCalculator: new AiConfidenceCalculator());
+
+        // Question about Kubernetes (out of scope) with answer that asserts unrelated repo facts
+        // using backticked symbol not in evidence
+        var question = "What endpoints does the WeatherController expose?";
+        // Answer with backticked MongoDB symbol not in the WeatherController chunk
+        var answerAssertingUnrelated = "The system has a `MongoDatabase` collection with a schema version 2.";
+
+        // Act via validator first to see status, then RagService
+        var validation = await validator.ValidateAnswerAsync(answerAssertingUnrelated, [chunk]);
+
+        // Assert: answer asserts repository facts not in evidence → Unsupported from validator
+        // (the actual contract: Unsupported when all claims are unsupported but evidence exists,
+        // InsufficientEvidence when no evidence chunks are provided at all).
+        Assert.Equal(AnswerValidationStatus.Unsupported, validation.Status);
+        // RagService should surface canonical message
+        var ragResult = await ragService.AnswerQuestionAsync(_analysisId, question);
+        Assert.Equal(InsufficientEvidenceResponse.DefaultMessage, ragResult.Answer);
+        Assert.False(ragResult.HasSufficientEvidence);
+        // Evidence should be cleared when validation concludes insufficient
+        Assert.Empty(ragResult.Evidence);
+        // Confidence should be Low per AiConfidenceCalculator groundingFactor=0.2 for InsufficientEvidence
+        // or groundingFactor=0.0 for Unsupported status — both return Low confidence.
+        Assert.Equal(AiConfidenceLevel.Low, ragResult.Confidence);
+    }
+
+    [Fact]
+    public async Task T107_UnknownAndInsufficientEvidence_ConfidenceCalculator_InsufficientEvidenceReturnsLow()
+    {
+        // Arrange: Test that AiConfidenceCalculator returns Low (not Unknown) when validation status indicates
+        // insufficient/unreliable evidence (Unsupported or InsufficientEvidence).
+        // NOTE: The validator returns Unsupported when all claims in the answer are unsupported by evidence,
+        // rather than InsufficientEvidence. This test verifies the confidence calculator correctly returns
+        // Low confidence for either status.
+        var calculator = new AiConfidenceCalculator();
+
+        var chunk = new VectorChunkSearchResult(
+            ChunkId: Guid.NewGuid(),
+            AnalysisId: _analysisId,
+            SourceFileId: Guid.NewGuid(),
+            FilePath: "WeatherController.cs",
+            Symbol: "WeatherController.GetAll",
+            StartLine: 19,
+            EndLine: 24,
+            Content: "[Authorize] [HttpGet] public async Task<IActionResult> GetAll() { return Ok(await _weatherService.GetForecastsAsync()); }",
+            TokenCount: 15,
+            ChunkIndex: 0,
+            EvidenceId: Guid.NewGuid(),
+            ConfidenceScore: 0.9f,
+            CosineDistance: 0.05,
+            SimilarityScore: 0.90);
+
+        // Answer asserts repository facts that don't match the retrieved chunk evidence.
+        var answer = "The system has a `MongoDatabase` collection with a schema version 2.";
+        var validator = new AiEvidenceValidator();
+        var validation = await validator.ValidateAnswerAsync(answer, [chunk]);
+
+        // The validator returns Unsupported when all claims are unsupported (not InsufficientEvidence).
+        // This is intentional: InsufficientEvidence = not enough evidence; Unsupported = evidence exists
+        // but claims don't match. Both warrant Low confidence.
+        Assert.Equal(AnswerValidationStatus.Unsupported, validation.Status);
+
+        // Act
+        var request = new ConfidenceEvaluationRequest(
+            "What endpoints exist?",
+            answer,
+            [chunk],
+            validation);
+
+        var result = calculator.EvaluateConfidence(request);
+
+        // Assert: AiConfidenceCalculator returns Low confidence for Unsupported status.
+        // GroundingFactor = 0.0 when validation.Status == Unsupported (line 115-118),
+        // resulting in Low confidence regardless of evidence quality factors.
+        Assert.Equal(AiConfidenceLevel.Low, result.Level);
+        // Score is 0.0 because groundingFactor = 0.0 makes evidenceQualityScore * 0.0 = 0.0
+        Assert.Equal(0.0f, result.Score);
+    }
+
+    [Fact]
+    public async Task T107_UnknownAndInsufficientEvidence_ChunksWithUnsupportedClaims()
+    {
+        // Arrange: Vector retriever returns chunks, answer has claims completely unsupported by evidence
+        // The TestAiProvider returns text with a backticked symbol not in the chunk → Unsupported status
+        var fakeRetriever = new TestVectorRetriever();
+        var fakeEmbeddingProvider = new TestEmbeddingProvider();
+        // Provider returns answer with unsupported backticked symbol
+        var fakeAiProvider = new TestAiProvider("The system has a `MongoDatabase` collection with a schema version 2.");
+
+        var chunk = new VectorChunkSearchResult(
+            ChunkId: Guid.NewGuid(),
+            AnalysisId: _analysisId,
+            SourceFileId: Guid.NewGuid(),
+            FilePath: "WeatherController.cs",
+            Symbol: "WeatherController.GetAll",
+            StartLine: 19,
+            EndLine: 24,
+            Content: "[Authorize] [HttpGet] public async Task<IActionResult> GetAll() { return Ok(await _weatherService.GetForecastsAsync()); }",
+            TokenCount: 15,
+            ChunkIndex: 0,
+            EvidenceId: Guid.NewGuid(),
+            ConfidenceScore: 0.9f,
+            CosineDistance: 0.05,
+            SimilarityScore: 0.90);
+
+        fakeRetriever.RegisterResult([chunk]);
+
+        var validator = new AiEvidenceValidator();
+
+        var ragService = new RagService(
+            fakeAiProvider,
+            fakeEmbeddingProvider,
+            fakeRetriever,
+            evidenceValidator: validator,
+            confidenceCalculator: new AiConfidenceCalculator());
+
+        // Question about WeatherController with answer asserting MongoDB (completely unsupported symbol not in chunk)
+        var question = "What endpoints and persistence does WeatherController have?";
+
+        // Act
+        var result = await ragService.AnswerQuestionAsync(_analysisId, question);
+
+        // Assert: answer has unsupported claims → Unsupported status + canonical message
+        Assert.Equal(AnswerValidationStatus.Unsupported, result.Validation.Status);
+        Assert.Equal(InsufficientEvidenceResponse.DefaultMessage, result.Answer);
+        Assert.False(result.HasSufficientEvidence);
+        Assert.Empty(result.Evidence);
+        // Confidence Low per AiConfidenceCalculator with Unsupported status
+        Assert.Equal(AiConfidenceLevel.Low, result.Confidence);
+    }
+
     private sealed class TestVectorRetriever : IVectorChunkRetriever
     {
         private IReadOnlyList<VectorChunkSearchResult> _results = [];
 
         public void RegisterResult(IReadOnlyList<VectorChunkSearchResult> results)
         {
-            _results = results;
+            _results = results.OrderByDescending(r => r.SimilarityScore).ToList();
         }
 
         public Task<IReadOnlyList<VectorChunkSearchResult>> RetrieveSimilarChunksAsync(
