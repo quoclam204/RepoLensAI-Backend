@@ -65,6 +65,8 @@ public static class DependencyInjection
         services.AddScoped<RepoLens.Application.Abstractions.ISymbolService, RepoLens.Infrastructure.Services.SymbolService>();
         services.AddScoped<RepoLens.Application.Abstractions.IEvidenceService, RepoLens.Infrastructure.Services.EvidenceService>();
         services.AddScoped<RepoLens.Application.Abstractions.IAnalysisPersistenceService, RepoLens.Infrastructure.Services.AnalysisPersistenceService>();
+        services.AddScoped<RepoLens.Application.Abstractions.IRepositoryTypeDetector, RepoLens.Infrastructure.Services.RepositoryTypeDetector>();
+        services.AddScoped<RepoLens.Application.Abstractions.IDiagramService, RepoLens.Infrastructure.Services.DiagramService>();
         // T085: chunk embedding application service (explicit composition Analyze -> Embed -> Persist).
         services.AddScoped<RepoLens.Application.Abstractions.AI.IChunkEmbeddingService, RepoLens.Application.Services.ChunkEmbeddingService>();
         services.AddScoped<RepoLens.Application.Abstractions.IRepositoryAnalyzer, RepoLens.Infrastructure.Adapters.Analysis.RoslynRepositoryAnalyzerAdapter>();

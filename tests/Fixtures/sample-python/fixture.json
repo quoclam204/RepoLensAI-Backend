@@ -1,0 +1,6 @@
+{
+  "id": "sample-python",
+  "version": "v1",
+  "language": "python",
+  "description": "Python Flask application fixture. Should be classified as Unsupported since deep analysis is only available for C# and JS/TS."
+}

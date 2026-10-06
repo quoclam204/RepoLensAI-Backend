@@ -515,7 +515,72 @@ Answer.
 Relevant evidence.
 Confidence.
 References nếu có.
-30. Non-Functional Requirements
+
+30. FR-024 — Repository Type Detection
+
+Hệ thống phải tự động phân loại repository thành một trong 6 loại:
+- ApiBackend: Ứng dụng Backend API (.NET Web API, Express, NestJS, Spring Boot, FastAPI, Go Gin, v.v.).
+- Frontend: Ứng dụng web/giao diện người dùng (React, Next.js, Vue, Angular, Svelte, Vite, v.v.).
+- Monorepo: Kho mã nguồn chứa nhiều workspace/project con kết hợp (pnpm workspaces, Lerna, Nx, Turborepo, .NET sln đa project).
+- Library: Thư viện/Package tái sử dụng (NuGet package, npm library, class library không có web entry point).
+- Cli: Ứng dụng Command Line Interface (console app với CLI arguments, System.CommandLine, Commander, Cobra, v.v.).
+- Unsupported: Không thuộc các loại trên hoặc thiếu bằng chứng xác định.
+
+Cơ chế phân loại phải dựa trên 3 lớp bằng chứng (Evidence Layers):
+- Layer 1 (File Markers): Kiểm tra sự hiện diện của file cấu hình đặc trưng (.sln, .csproj, package.json, lerna.json, nx.json, pnpm-workspace.yaml, Dockerfile, v.v.).
+- Layer 2 (Code Patterns): Kiểm tra pattern trong mã nguồn (Program.cs, Controller, DbContext, route handlers, next.config.js, CLI parsers, v.v.).
+- Layer 3 (Component Relationships): Phân tích quan hệ cấu trúc giữa các project, phân cấp thư mục, dependency references.
+
+Mức độ tin cậy (Confidence): High, Medium, Low, Unknown.
+Nguyên tắc: Không được bịa thông tin khi thiếu bằng chứng thực tế từ mã nguồn.
+
+31. FR-025 — Diagram Generation & Archify Specification
+
+Hệ thống phải tự động sinh sơ đồ kiến trúc động phù hợp với loại repository đã phân loại:
+- ApiBackend: Sơ đồ Kiến trúc phân tầng (Architecture), Sơ đồ Endpoint (Endpoints), Sơ đồ Thực thể CSDL (ERD).
+- Frontend: Sơ đồ Kiến trúc (Architecture), Bản đồ Tuyến đường (Routes), Cây Thành phần (Components).
+- Monorepo: Tổng quan Hệ thống (System Overview), Không gian làm việc (Workspaces), Phụ thuộc Liên Package (Dependencies).
+- Library: Kiến trúc Thư viện (Architecture), Lớp & Không gian tên (Classes & Namespaces), Phụ thuộc Ngoại vi (Dependencies).
+- Cli: Kiến trúc Ứng dụng (Architecture), Cây Lệnh CLI (Commands), Luồng Thực thi (Call Flow).
+- Unsupported: Tổng quan Cấu trúc (Overview).
+
+Quy tắc Archify cho Sơ đồ:
+1. Quy mô hiển thị: 8–12 node chính ban đầu trên màn hình (giới hạn tối đa ~30 node), các thành phần phụ gom nhóm dưới dạng "+N khác".
+2. Kiểu đường nối (Edge styles):
+   - Nét liền: Quan hệ có bằng chứng mã nguồn trực tiếp (Code Evidence - isInferred: false).
+   - Nét đứt: Quan hệ suy luận luồng thực thi (Inferred flow - isInferred: true, kèm mức confidence).
+3. Thẻ chi tiết (DetailCard): Khi chọn node, hiển thị đầy đủ:
+   - Vai trò kiến trúc (Controller, Service, Repository, Database, Page, v.v.).
+   - File path kèm liên kết mở file trong Explorer.
+   - Symbol đại diện (class/method).
+   - Line range với nhãn "SRC n" (ví dụ: "SRC 1 (L10-L80)").
+   - Mô tả ngắn gọn nhiệm vụ của component.
+   - 2 nút Trace Reach: "Ai phụ thuộc nó" (Upstream) và "Nó phụ thuộc vào" (Downstream).
+   - Nút Drill-down mở sơ đồ con nếu node có liên kết sơ đồ chi tiết (childDiagramType).
+4. Tính trung thực (Grounding):
+   - Không được tạo fact khi thiếu bằng chứng.
+   - Nếu không phát hiện DbContext hoặc entity, sơ đồ ERD trả về status "NotDetected" kèm thông báo "Không phát hiện database hoặc DbContext trong repository này", không vẽ fact ảo.
+
+32. FR-026 — Repository Classification & Diagram APIs
+
+Backend phải cung cấp các REST API sau:
+- GET /api/analyses/{id}/classification:
+  Trả về thông tin phân loại repository, ngôn ngữ phát hiện, confidence, danh sách bằng chứng 3 lớp và tóm tắt suy luận.
+- GET /api/analyses/{id}/diagrams:
+  Trả về sơ đồ mặc định phù hợp với loại repository.
+- GET /api/analyses/{id}/diagrams/{diagramType}:
+  Trả về sơ đồ chuyên biệt theo loại yêu cầu (ví dụ: endpoints, erd, routes, components).
+
+Acceptance Criteria cho FR-024, FR-025, FR-026:
+- AC-01: Phân loại chính xác 6 loại repository dựa trên mã nguồn thực tế với ít nhất 2/3 lớp bằng chứng đồng thuận đạt High confidence.
+- AC-02: Endpoint /api/analyses/{id}/classification trả về HTTP 200 OK kèm đầy đủ bằng chứng khi phân tích Completed; trả về HTTP 404 khi không tìm thấy AnalysisId; trả về HTTP 409 khi Analysis chưa hoàn tất.
+- AC-03: Endpoint /api/analyses/{id}/diagrams trả về đầy đủ Nodes, Edges, DetailCards theo chuẩn Archify Specification.
+- AC-04: Mọi Edge suy luận luồng phải có isInferred = true và stroke nét đứt trên giao diện.
+- AC-05: Khi repository không có DbContext/Entity, truy vấn sơ đồ ERD trả về status "NotDetected" và Frontend hiển thị thông báo rõ ràng, không vẽ bảng dữ liệu ảo.
+- AC-06: Tính cô lập dữ liệu (Data Isolation): Truy vấn sơ đồ và phân loại của AnalysisId này tuyệt đối không chứa hoặc rò rỉ bất kỳ node/symbol nào từ AnalysisId khác.
+- AC-07: DetailCard cho từng node hiển thị nhãn "SRC n", cho phép kích hoạt Upstream/Downstream reach và drill-down sơ đồ con tương ứng.
+
+33. Non-Functional Requirements
 NFR-001 — Security
 
 Repository phải được xử lý như untrusted input.

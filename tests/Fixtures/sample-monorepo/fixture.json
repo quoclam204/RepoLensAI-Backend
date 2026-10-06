@@ -1,0 +1,6 @@
+{
+  "id": "sample-monorepo",
+  "version": "v1",
+  "language": "mixed",
+  "description": "Monorepo fixture with a .NET backend, a shared library, and a Next.js frontend. Has multiple project files across subdirectories."
+}

@@ -1,0 +1,6 @@
+{
+  "id": "sample-library",
+  "version": "v1",
+  "language": "csharp",
+  "description": "Minimal C# class library fixture. No entry point, no controllers, no API — just public classes and interfaces."
+}

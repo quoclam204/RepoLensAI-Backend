@@ -239,6 +239,7 @@ public class ArchifyAdapter : IArchifyAdapter
         var runtimeIds = new List<string>();
         var policyIds = new List<string>();
         var dataIds = new List<string>();
+        var externalIds = new List<string>();
 
         foreach (var node in architectureResponse.Nodes)
         {
@@ -270,9 +271,13 @@ public class ArchifyAdapter : IArchifyAdapter
                     policyIds.Add(id);
                     break;
                 case "data":
-                case "external":
-                default:
                     dataIds.Add(id);
+                    break;
+                case "external":
+                    externalIds.Add(id);
+                    break;
+                default:
+                    runtimeIds.Add(id);
                     break;
             }
         }
@@ -282,17 +287,21 @@ public class ArchifyAdapter : IArchifyAdapter
         {
             boundaries.Add(new ArchifyV3Boundary("lane-ui", "region", "01 / User Interface & Gateway", "ui", uiIds.AsReadOnly()));
         }
-        if (runtimeIds.Count > 0)
-        {
-            boundaries.Add(new ArchifyV3Boundary("lane-runtime", "region", "02 / Core Runtime & Application", "runtime", runtimeIds.AsReadOnly()));
-        }
         if (policyIds.Count > 0)
         {
             boundaries.Add(new ArchifyV3Boundary("lane-policy", "region", "EX / Policy, Guard & Gate", "policy", policyIds.AsReadOnly()));
         }
+        if (runtimeIds.Count > 0)
+        {
+            boundaries.Add(new ArchifyV3Boundary("lane-runtime", "region", "02 / Core Runtime & Application Services", "runtime", runtimeIds.AsReadOnly()));
+        }
         if (dataIds.Count > 0)
         {
-            boundaries.Add(new ArchifyV3Boundary("lane-data", "region", "Data, Persistence & External", "data", dataIds.AsReadOnly()));
+            boundaries.Add(new ArchifyV3Boundary("lane-data", "region", "03 / Data, Persistence & Storage", "data", dataIds.AsReadOnly()));
+        }
+        if (externalIds.Count > 0)
+        {
+            boundaries.Add(new ArchifyV3Boundary("lane-external", "region", "04 / External Services & Cloud APIs", "external", externalIds.AsReadOnly()));
         }
 
         var connections = architectureResponse.Edges.Select((edge, idx) => new ArchifyV3Connection(
@@ -469,19 +478,19 @@ public class ArchifyAdapter : IArchifyAdapter
     private static string CategorizeNode(string name, string type, string? path)
     {
         var text = $"{name} {type} {path ?? ""}".ToLowerInvariant();
-        if (text.Contains("api") || text.Contains("controller") || text.Contains("endpoint") || text.Contains("web") || text.Contains("ui") || text.Contains("frontend"))
+        if (text.Contains("controller") || text.Contains("endpoint") || text.Contains("web") || text.Contains("ui") || text.Contains("frontend") || text.Contains("client"))
         {
             return "ui";
         }
-        if (text.Contains("guard") || text.Contains("policy") || text.Contains("security") || text.Contains("auth") || text.Contains("validator"))
+        if ((text.Contains("guard") || text.Contains("strategy") || text.Contains("policy") || text.Contains("gate") || text.Contains("role")) && !text.Contains("service"))
         {
             return "policy";
         }
-        if (text.Contains("db") || text.Contains("database") || text.Contains("context") || text.Contains("repository") || text.Contains("entity") || text.Contains("data"))
+        if (text.Contains("db") || text.Contains("database") || text.Contains("context") || text.Contains("repository") || text.Contains("entity") || text.Contains("prisma"))
         {
             return "data";
         }
-        if (text.Contains("external") || text.Contains("cloud") || text.Contains("redis") || text.Contains("queue") || text.Contains("rabbit") || text.Contains("kafka"))
+        if (text.Contains("external") || text.Contains("oauth") || text.Contains("google") || text.Contains("resend") || text.Contains("smtp") || text.Contains("redis") || text.Contains("kafka"))
         {
             return "external";
         }
