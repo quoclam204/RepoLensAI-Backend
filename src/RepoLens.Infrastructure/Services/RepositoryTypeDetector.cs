@@ -183,25 +183,28 @@ public class RepositoryTypeDetector : IRepositoryTypeDetector
                 // Python markers
                 else if (fileName.Equals("requirements.txt", StringComparison.OrdinalIgnoreCase) ||
                          fileName.Equals("setup.py", StringComparison.OrdinalIgnoreCase) ||
-                         fileName.Equals("pyproject.toml", StringComparison.OrdinalIgnoreCase))
+                         fileName.Equals("pyproject.toml", StringComparison.OrdinalIgnoreCase) ||
+                         fileName.Equals("manage.py", StringComparison.OrdinalIgnoreCase) ||
+                         fileName.Equals("Pipfile", StringComparison.OrdinalIgnoreCase))
                 {
                     detectedLanguages.Add("Python");
                     evidences.Add(new ClassificationEvidence
                     {
                         FilePath = relativePath,
-                        Reason = $"Python project file ({fileName}) detected — deep analysis not supported",
+                        Reason = $"Python project file ({fileName}) detected (FastAPI / Django / Flask / Web)",
                         Layer = 1
                     });
                 }
                 // Java markers
                 else if (fileName.Equals("pom.xml", StringComparison.OrdinalIgnoreCase) ||
-                         fileName.Equals("build.gradle", StringComparison.OrdinalIgnoreCase))
+                         fileName.Equals("build.gradle", StringComparison.OrdinalIgnoreCase) ||
+                         fileName.Equals("build.gradle.kts", StringComparison.OrdinalIgnoreCase))
                 {
                     detectedLanguages.Add("Java");
                     evidences.Add(new ClassificationEvidence
                     {
                         FilePath = relativePath,
-                        Reason = $"Java project file ({fileName}) detected — deep analysis not supported",
+                        Reason = $"Java project file ({fileName}) detected (Spring Boot / Maven / Gradle)",
                         Layer = 1
                     });
                 }
@@ -212,7 +215,29 @@ public class RepositoryTypeDetector : IRepositoryTypeDetector
                     evidences.Add(new ClassificationEvidence
                     {
                         FilePath = relativePath,
-                        Reason = "Go module file detected — deep analysis not supported",
+                        Reason = "Go module file (go.mod) detected (Gin / Fiber / Web)",
+                        Layer = 1
+                    });
+                }
+                // PHP markers
+                else if (fileName.Equals("composer.json", StringComparison.OrdinalIgnoreCase))
+                {
+                    detectedLanguages.Add("PHP");
+                    evidences.Add(new ClassificationEvidence
+                    {
+                        FilePath = relativePath,
+                        Reason = "PHP Composer project file detected (Laravel / Symfony / Web)",
+                        Layer = 1
+                    });
+                }
+                // Rust markers
+                else if (fileName.Equals("Cargo.toml", StringComparison.OrdinalIgnoreCase))
+                {
+                    detectedLanguages.Add("Rust");
+                    evidences.Add(new ClassificationEvidence
+                    {
+                        FilePath = relativePath,
+                        Reason = "Rust Cargo package file detected (Actix / Axum / Web)",
                         Layer = 1
                     });
                 }
@@ -454,6 +479,54 @@ public class RepositoryTypeDetector : IRepositoryTypeDetector
             });
         }
 
+        // ASP.NET Core MVC detection (Razor views, Areas, ViewComponents, wwwroot)
+        var razorFiles = sourceFiles.Where(f => f.EndsWith(".cshtml", StringComparison.OrdinalIgnoreCase) ||
+                                               f.EndsWith(".razor", StringComparison.OrdinalIgnoreCase)).ToList();
+        if (razorFiles.Count > 0)
+        {
+            evidences.Add(new ClassificationEvidence
+            {
+                FilePath = razorFiles.First(),
+                Reason = $"{razorFiles.Count} Razor view (.cshtml) file(s) detected — indicates ASP.NET Core MVC (Server-Side Rendering)",
+                Layer = 2
+            });
+        }
+
+        var hasAreas = sourceFiles.Any(f => f.Contains("/Areas/", StringComparison.OrdinalIgnoreCase) ||
+                                           f.StartsWith("Areas/", StringComparison.OrdinalIgnoreCase));
+        if (hasAreas)
+        {
+            evidences.Add(new ClassificationEvidence
+            {
+                FilePath = "Areas/",
+                Reason = "ASP.NET Core Area partition detected (e.g., Admin Area)",
+                Layer = 2
+            });
+        }
+
+        var viewComponents = symbols.Where(s => s.Name.EndsWith("ViewComponent", StringComparison.OrdinalIgnoreCase)).ToList();
+        if (viewComponents.Count > 0)
+        {
+            evidences.Add(new ClassificationEvidence
+            {
+                FilePath = viewComponents.First().SourceFile.Path,
+                Reason = $"{viewComponents.Count} ViewComponent(s) detected ({string.Join(", ", viewComponents.Select(v => v.Name))})",
+                Layer = 2
+            });
+        }
+
+        var hasWwwroot = sourceFiles.Any(f => f.Contains("/wwwroot/", StringComparison.OrdinalIgnoreCase) ||
+                                              f.StartsWith("wwwroot/", StringComparison.OrdinalIgnoreCase));
+        if (hasWwwroot)
+        {
+            evidences.Add(new ClassificationEvidence
+            {
+                FilePath = "wwwroot/",
+                Reason = "wwwroot static assets directory detected (CSS, JS, Images, Lib)",
+                Layer = 2
+            });
+        }
+
         return evidences;
     }
 
@@ -546,7 +619,10 @@ public class RepositoryTypeDetector : IRepositoryTypeDetector
         HashSet<string> detectedLanguages)
     {
         // Check for unsupported languages first
-        var supportedLanguages = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "C#", "TypeScript", "JavaScript" };
+        var supportedLanguages = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "C#", "TypeScript", "JavaScript", "Java", "Python", "Go", "PHP", "Rust", "Kotlin"
+        };
         var hasOnlyUnsupported = detectedLanguages.Count > 0 &&
                                   !detectedLanguages.Any(l => supportedLanguages.Contains(l));
 
@@ -612,9 +688,10 @@ public class RepositoryTypeDetector : IRepositoryTypeDetector
             );
         }
 
-        // === API BACKEND detection ===
+        // === API BACKEND / MVC MONOLITH detection ===
         if (hasApiEndpoints || hasControllers)
         {
+            var isMvc = layer2.Any(e => e.Reason.Contains("Razor view") || e.Reason.Contains("Area partition") || e.Reason.Contains("ViewComponent"));
             var confidence = (hasApiEndpoints && hasControllers && hasDbContext)
                 ? DetectionConfidence.High
                 : (hasApiEndpoints || hasControllers)
@@ -622,11 +699,14 @@ public class RepositoryTypeDetector : IRepositoryTypeDetector
                     : DetectionConfidence.Low;
 
             var dbNote = hasDbContext ? " Database layer detected." : "";
+            var archSummary = isMvc
+                ? "ASP.NET Core MVC monolith (Server-Side Rendering) with Razor Views, Admin Area, and ViewComponents."
+                : "Request flow: Controller → Service → Repository → Database.";
+
             return (
                 RepositoryType.ApiBackend,
                 confidence,
-                $"API backend project ({string.Join(", ", detectedLanguages)}).{dbNote} " +
-                "Request flow: Controller → Service → Repository → Database."
+                $"{(isMvc ? "ASP.NET Core MVC" : "API backend")} project ({string.Join(", ", detectedLanguages)}).{dbNote} {archSummary}"
             );
         }
 
@@ -653,6 +733,66 @@ public class RepositoryTypeDetector : IRepositoryTypeDetector
                 RepositoryType.ApiBackend,
                 DetectionConfidence.Medium,
                 "Express.js API backend. Endpoint listing available."
+            );
+        }
+
+        // === JAVA / Spring Boot backend ===
+        bool hasJava = detectedLanguages.Contains("Java");
+        if (hasJava)
+        {
+            return (
+                RepositoryType.ApiBackend,
+                DetectionConfidence.High,
+                $"Java Enterprise / Spring Boot application ({string.Join(", ", detectedLanguages)}). " +
+                "Architecture: DispatcherServlet → Controller → Service → Repository → Database."
+            );
+        }
+
+        // === PYTHON backend (FastAPI / Django / Flask) ===
+        bool hasPython = detectedLanguages.Contains("Python");
+        if (hasPython)
+        {
+            return (
+                RepositoryType.ApiBackend,
+                DetectionConfidence.High,
+                $"Python application ({string.Join(", ", detectedLanguages)}). " +
+                "Architecture: Client Request → Router/Views → Services/UseCases → Models/ORM → Database."
+            );
+        }
+
+        // === GO backend (Gin / Fiber / Standard) ===
+        bool hasGo = detectedLanguages.Contains("Go");
+        if (hasGo)
+        {
+            return (
+                RepositoryType.ApiBackend,
+                DetectionConfidence.High,
+                $"Go backend service ({string.Join(", ", detectedLanguages)}). " +
+                "Architecture: HTTP Router → Handlers → Services/UseCases → Repositories/Database."
+            );
+        }
+
+        // === PHP backend (Laravel / Symfony) ===
+        bool hasPhp = detectedLanguages.Contains("PHP");
+        if (hasPhp)
+        {
+            return (
+                RepositoryType.ApiBackend,
+                DetectionConfidence.High,
+                $"PHP application ({string.Join(", ", detectedLanguages)}). " +
+                "Architecture: Routing → Controllers → Eloquent Models → Views/Database."
+            );
+        }
+
+        // === RUST backend ===
+        bool hasRust = detectedLanguages.Contains("Rust");
+        if (hasRust)
+        {
+            return (
+                RepositoryType.ApiBackend,
+                DetectionConfidence.High,
+                $"Rust service ({string.Join(", ", detectedLanguages)}). " +
+                "Architecture: Async HTTP Router → Handlers → Domain Logic → Storage."
             );
         }
 
