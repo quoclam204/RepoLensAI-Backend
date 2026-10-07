@@ -1292,7 +1292,135 @@ public class DiagramService : IDiagramService
         CancellationToken ct)
     {
         var availableTypes = new[] { "namespace_class", "hierarchy" };
+        if (string.Equals(diagramType, "hierarchy", StringComparison.OrdinalIgnoreCase))
+        {
+            return await GenerateHierarchyDiagramAsync(analysisId, RepositoryType.Library, availableTypes, ct);
+        }
+
         return await GenerateNamespaceClassDiagramAsync(analysisId, RepositoryType.Library, availableTypes, ct);
+    }
+
+    private async Task<DiagramDto> GenerateHierarchyDiagramAsync(
+        Guid analysisId,
+        RepositoryType repoType,
+        IReadOnlyList<string> availableTypes,
+        CancellationToken ct)
+    {
+        var symbols = await _context.CodeSymbols
+            .AsNoTracking()
+            .Include(s => s.SourceFile)
+            .Where(s => s.SourceFile.AnalysisId == analysisId &&
+                       (s.SymbolType == SymbolType.Class || s.SymbolType == SymbolType.Interface))
+            .Take(30)
+            .ToListAsync(ct);
+
+        var dependencies = await _context.Dependencies
+            .AsNoTracking()
+            .Where(d => d.AnalysisId == analysisId &&
+                       (d.DependencyType == DependencyType.Implements ||
+                        d.DependencyType == DependencyType.Inherits))
+            .ToListAsync(ct);
+
+        var nodes = new List<DiagramNodeDto>();
+        var edges = new List<DiagramEdgeDto>();
+
+        var symbolToNodeId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var displayedSymbols = symbols.Take(12).ToList();
+        var remainingSymbols = symbols.Skip(12).ToList();
+
+        // In hierarchy: Interfaces and Base classes on top
+        var interfaces = displayedSymbols.Where(s => s.SymbolType == SymbolType.Interface).ToList();
+        var classes = displayedSymbols.Where(s => s.SymbolType != SymbolType.Interface).ToList();
+
+        foreach (var sym in interfaces)
+        {
+            var nodeId = sym.Id.ToString();
+            nodes.Add(new DiagramNodeDto
+            {
+                Id = nodeId,
+                Label = sym.Name,
+                Kind = "interface",
+                Role = "Interface",
+                Evidence = [sym.SourceFile?.Path ?? string.Empty, $"SRC 1 (L{sym.StartLine}-L{sym.EndLine})"]
+            });
+            RegisterSymbolAliases(symbolToNodeId, sym, nodeId);
+        }
+
+        foreach (var sym in classes)
+        {
+            var nodeId = sym.Id.ToString();
+            nodes.Add(new DiagramNodeDto
+            {
+                Id = nodeId,
+                Label = sym.Name,
+                Kind = "class",
+                Role = "Class",
+                Evidence = [sym.SourceFile?.Path ?? string.Empty, $"SRC 1 (L{sym.StartLine}-L{sym.EndLine})"]
+            });
+            RegisterSymbolAliases(symbolToNodeId, sym, nodeId);
+        }
+
+        const string groupNodeId = "group-more-classes";
+        if (remainingSymbols.Count > 0)
+        {
+            nodes.Add(new DiagramNodeDto
+            {
+                Id = groupNodeId,
+                Label = $"+{remainingSymbols.Count} class khác",
+                Kind = "group",
+                Role = "Group",
+                Evidence = ["(Các class và interface còn lại)"]
+            });
+            foreach (var sym in remainingSymbols)
+            {
+                RegisterSymbolAliases(symbolToNodeId, sym, groupNodeId);
+            }
+        }
+
+        var seenEdgePairs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var dep in dependencies)
+        {
+            var fromNodeId = ResolveNodeId(dep.SourceId, symbolToNodeId);
+            var toNodeId = ResolveNodeId(dep.TargetId, symbolToNodeId);
+
+            if (fromNodeId != null && toNodeId != null && fromNodeId != toNodeId)
+            {
+                var pairKey = $"{fromNodeId}->{toNodeId}";
+                if (seenEdgePairs.Add(pairKey))
+                {
+                    edges.Add(new DiagramEdgeDto
+                    {
+                        Id = dep.Id != Guid.Empty ? dep.Id.ToString() : $"edge-{fromNodeId}-{toNodeId}",
+                        From = fromNodeId,
+                        To = toNodeId,
+                        Kind = dep.DependencyType.ToString().ToLowerInvariant(),
+                        Confidence = "High",
+                        IsInferred = false,
+                        Label = dep.DependencyType.ToString()
+                    });
+                }
+            }
+        }
+
+        if (edges.Count == 0 && nodes.Count >= 2)
+        {
+            InferLibraryEdges(displayedSymbols, remainingSymbols, groupNodeId, edges, seenEdgePairs);
+        }
+
+        var detailCards = BuildDetailCards(nodes, edges);
+
+        return new DiagramDto
+        {
+            DiagramType = "hierarchy",
+            RepositoryType = repoType,
+            Status = "Success",
+            DatabaseDetected = false,
+            AvailableDiagramTypes = availableTypes,
+            Nodes = nodes,
+            Edges = edges,
+            DetailCards = detailCards
+        };
     }
 
     private async Task<DiagramDto> GenerateCliDiagramAsync(
@@ -1330,52 +1458,81 @@ public class DiagramService : IDiagramService
             .Where(d => d.AnalysisId == analysisId &&
                        (d.DependencyType == DependencyType.Implements ||
                         d.DependencyType == DependencyType.Inherits ||
-                        d.DependencyType == DependencyType.Calls))
+                        d.DependencyType == DependencyType.Calls ||
+                        d.DependencyType == DependencyType.DependsOn))
             .ToListAsync(ct);
 
         var nodes = new List<DiagramNodeDto>();
         var edges = new List<DiagramEdgeDto>();
 
-        foreach (var sym in symbols.Take(12))
+        var symbolToNodeId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var displayedSymbols = symbols.Take(12).ToList();
+        var remainingSymbols = symbols.Skip(12).ToList();
+
+        foreach (var sym in displayedSymbols)
         {
             var isInterface = sym.SymbolType == SymbolType.Interface;
+            var nodeId = sym.Id.ToString();
             nodes.Add(new DiagramNodeDto
             {
-                Id = sym.Id.ToString(),
+                Id = nodeId,
                 Label = sym.Name,
                 Kind = isInterface ? "interface" : "class",
-                Role = "Class",
-                Evidence = [sym.SourceFile.Path, $"SRC 1 (L{sym.StartLine}-L{sym.EndLine})"]
+                Role = isInterface ? "Interface" : "Class",
+                Evidence = [sym.SourceFile?.Path ?? string.Empty, $"SRC 1 (L{sym.StartLine}-L{sym.EndLine})"]
             });
+
+            RegisterSymbolAliases(symbolToNodeId, sym, nodeId);
         }
 
-        if (symbols.Count > 12)
+        const string groupNodeId = "group-more-classes";
+        if (remainingSymbols.Count > 0)
         {
             nodes.Add(new DiagramNodeDto
             {
-                Id = "group-more-classes",
-                Label = $"+{symbols.Count - 12} class khác",
+                Id = groupNodeId,
+                Label = $"+{remainingSymbols.Count} class khác",
                 Kind = "group",
                 Role = "Group",
                 Evidence = ["(Các class và interface còn lại)"]
             });
+
+            foreach (var sym in remainingSymbols)
+            {
+                RegisterSymbolAliases(symbolToNodeId, sym, groupNodeId);
+            }
         }
+
+        var seenEdgePairs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var dep in dependencies)
         {
-            if (nodes.Any(n => n.Id == dep.SourceId) && nodes.Any(n => n.Id == dep.TargetId))
+            var fromNodeId = ResolveNodeId(dep.SourceId, symbolToNodeId);
+            var toNodeId = ResolveNodeId(dep.TargetId, symbolToNodeId);
+
+            if (fromNodeId != null && toNodeId != null && fromNodeId != toNodeId)
             {
-                edges.Add(new DiagramEdgeDto
+                var pairKey = $"{fromNodeId}->{toNodeId}";
+                if (seenEdgePairs.Add(pairKey))
                 {
-                    Id = dep.Id.ToString(),
-                    From = dep.SourceId,
-                    To = dep.TargetId,
-                    Kind = dep.DependencyType.ToString().ToLowerInvariant(),
-                    Confidence = "High",
-                    IsInferred = false,
-                    Label = dep.DependencyType.ToString()
-                });
+                    edges.Add(new DiagramEdgeDto
+                    {
+                        Id = dep.Id != Guid.Empty ? dep.Id.ToString() : $"edge-{fromNodeId}-{toNodeId}",
+                        From = fromNodeId,
+                        To = toNodeId,
+                        Kind = dep.DependencyType.ToString().ToLowerInvariant(),
+                        Confidence = "High",
+                        IsInferred = false,
+                        Label = dep.DependencyType.ToString()
+                    });
+                }
             }
+        }
+
+        // Fallback: If no explicit dependencies matched, infer logical relationships between related components
+        if (edges.Count == 0 && nodes.Count >= 2)
+        {
+            InferLibraryEdges(displayedSymbols, remainingSymbols, groupNodeId, edges, seenEdgePairs);
         }
 
         var detailCards = BuildDetailCards(nodes, edges);
@@ -1391,6 +1548,183 @@ public class DiagramService : IDiagramService
             Edges = edges,
             DetailCards = detailCards
         };
+    }
+
+    private static void RegisterSymbolAliases(Dictionary<string, string> map, CodeSymbol sym, string targetNodeId)
+    {
+        map[sym.Id.ToString()] = targetNodeId;
+        if (!string.IsNullOrWhiteSpace(sym.Name))
+        {
+            map[sym.Name] = targetNodeId;
+            map[$"class:{sym.Name}"] = targetNodeId;
+            map[$"interface:{sym.Name}"] = targetNodeId;
+            map[$"type:{sym.Name}"] = targetNodeId;
+            map[$"symbol:{sym.Name}"] = targetNodeId;
+        }
+        if (!string.IsNullOrWhiteSpace(sym.FullName))
+        {
+            map[sym.FullName] = targetNodeId;
+            map[$"class:{sym.FullName}"] = targetNodeId;
+            map[$"interface:{sym.FullName}"] = targetNodeId;
+            map[$"type:{sym.FullName}"] = targetNodeId;
+            map[$"symbol:{sym.FullName}"] = targetNodeId;
+        }
+    }
+
+    private static string? ResolveNodeId(string identifier, Dictionary<string, string> map)
+    {
+        if (string.IsNullOrWhiteSpace(identifier)) return null;
+        if (map.TryGetValue(identifier, out var direct)) return direct;
+
+        var clean = identifier;
+        var colonIdx = clean.IndexOf(':');
+        if (colonIdx >= 0)
+        {
+            clean = clean.Substring(colonIdx + 1);
+            if (map.TryGetValue(clean, out var cleanMatch)) return cleanMatch;
+        }
+
+        var parts = clean.Split('.');
+        for (int i = parts.Length - 1; i >= 0; i--)
+        {
+            var part = parts[i];
+            if (map.TryGetValue(part, out var partMatch)) return partMatch;
+        }
+
+        return null;
+    }
+
+    private static void InferLibraryEdges(
+        List<CodeSymbol> displayedSymbols,
+        List<CodeSymbol> remainingSymbols,
+        string groupNodeId,
+        List<DiagramEdgeDto> edges,
+        HashSet<string> seenEdgePairs)
+    {
+        var interfaces = displayedSymbols.Where(s => s.SymbolType == SymbolType.Interface).ToList();
+        var classes = displayedSymbols.Where(s => s.SymbolType != SymbolType.Interface).ToList();
+
+        // 1. Interface -> Implementing Class by naming convention
+        foreach (var iface in interfaces)
+        {
+            var ifaceBaseName = iface.Name.StartsWith("I", StringComparison.Ordinal) && iface.Name.Length > 2 && char.IsUpper(iface.Name[1])
+                ? iface.Name.Substring(1)
+                : iface.Name;
+
+            var matchingClass = classes.FirstOrDefault(c => c.Name.Contains(ifaceBaseName, StringComparison.OrdinalIgnoreCase));
+            if (matchingClass != null)
+            {
+                var pairKey = $"{matchingClass.Id}->{iface.Id}";
+                if (seenEdgePairs.Add(pairKey))
+                {
+                    edges.Add(new DiagramEdgeDto
+                    {
+                        Id = $"edge-infer-{matchingClass.Id}-{iface.Id}",
+                        From = matchingClass.Id.ToString(),
+                        To = iface.Id.ToString(),
+                        Kind = "implements",
+                        Confidence = "Medium",
+                        IsInferred = true,
+                        Label = "Implements"
+                    });
+                }
+            }
+        }
+
+        // 2. Options / Context / Domain relationships
+        for (int i = 0; i < classes.Count; i++)
+        {
+            for (int j = 0; j < classes.Count; j++)
+            {
+                if (i == j) continue;
+                var c1 = classes[i];
+                var c2 = classes[j];
+
+                bool isRelated = false;
+                string label = "DependsOn";
+
+                if (c1.Name.EndsWith("Options", StringComparison.OrdinalIgnoreCase) &&
+                    c2.Name.StartsWith(c1.Name.Substring(0, Math.Max(1, c1.Name.Length - 7)), StringComparison.OrdinalIgnoreCase))
+                {
+                    isRelated = true;
+                    label = "Configures";
+                }
+                else if (c1.Name.Contains("Provider", StringComparison.OrdinalIgnoreCase) && c2.Name.Contains("Token", StringComparison.OrdinalIgnoreCase))
+                {
+                    isRelated = true;
+                    label = "Manages";
+                }
+                else if (c1.Name.Contains("Error", StringComparison.OrdinalIgnoreCase) && c2.Name.Contains("Error", StringComparison.OrdinalIgnoreCase))
+                {
+                    isRelated = true;
+                    label = "Handles";
+                }
+                else if (c2.Name.Contains(c1.Name, StringComparison.OrdinalIgnoreCase) && c1.Name.Length >= 5)
+                {
+                    isRelated = true;
+                    label = "Extends";
+                }
+
+                if (isRelated)
+                {
+                    var pairKey = $"{c1.Id}->{c2.Id}";
+                    if (seenEdgePairs.Add(pairKey))
+                    {
+                        edges.Add(new DiagramEdgeDto
+                        {
+                            Id = $"edge-infer-{c1.Id}-{c2.Id}",
+                            From = c1.Id.ToString(),
+                            To = c2.Id.ToString(),
+                            Kind = "dependson",
+                            Confidence = "Medium",
+                            IsInferred = true,
+                            Label = label
+                        });
+                    }
+                }
+            }
+        }
+
+        // 3. Fallback: connect sequential classes if no edges found
+        if (edges.Count == 0 && classes.Count >= 2)
+        {
+            for (int i = 0; i < classes.Count - 1; i++)
+            {
+                var c1 = classes[i];
+                var c2 = classes[i + 1];
+                var pairKey = $"{c1.Id}->{c2.Id}";
+                if (seenEdgePairs.Add(pairKey))
+                {
+                    edges.Add(new DiagramEdgeDto
+                    {
+                        Id = $"edge-seq-{c1.Id}-{c2.Id}",
+                        From = c1.Id.ToString(),
+                        To = c2.Id.ToString(),
+                        Kind = "calls",
+                        Confidence = "Low",
+                        IsInferred = true,
+                        Label = "Uses"
+                    });
+                }
+                if (edges.Count >= 6) break;
+            }
+        }
+
+        // Connect group node if exists
+        if (remainingSymbols.Count > 0 && classes.Count > 0 && !seenEdgePairs.Any(p => p.Contains(groupNodeId)))
+        {
+            var firstClass = classes[0];
+            edges.Add(new DiagramEdgeDto
+            {
+                Id = $"edge-infer-{firstClass.Id}-{groupNodeId}",
+                From = firstClass.Id.ToString(),
+                To = groupNodeId,
+                Kind = "dependson",
+                Confidence = "Low",
+                IsInferred = true,
+                Label = "References"
+            });
+        }
     }
 
     private async Task<DiagramDto> GenerateCliCallFlowDiagramAsync(
@@ -2394,13 +2728,25 @@ public class DiagramService : IDiagramService
             f.Path.Contains("api", StringComparison.OrdinalIgnoreCase) ||
             f.Path.Contains("view", StringComparison.OrdinalIgnoreCase)).Take(6).ToList();
 
+        var usedNodeIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            clientNodeId,
+            gatewayNodeId
+        };
+
         var handlerNodeIds = new List<string>();
         if (handlerFiles.Count > 0)
         {
+            int hCounter = 1;
             foreach (var f in handlerFiles)
             {
                 var name = Path.GetFileNameWithoutExtension(f.Path);
-                var hId = $"mod-{name.ToLowerInvariant()}";
+                var baseId = $"mod-{name.ToLowerInvariant()}";
+                var hId = baseId;
+                while (!usedNodeIds.Add(hId))
+                {
+                    hId = $"{baseId}-{hCounter++}";
+                }
                 handlerNodeIds.Add(hId);
 
                 nodes.Add(new DiagramNodeDto
@@ -2426,6 +2772,7 @@ public class DiagramService : IDiagramService
         else
         {
             var defId = "mod-core-handlers";
+            usedNodeIds.Add(defId);
             handlerNodeIds.Add(defId);
             nodes.Add(new DiagramNodeDto
             {
@@ -2458,10 +2805,16 @@ public class DiagramService : IDiagramService
         var serviceNodeIds = new List<string>();
         if (serviceFiles.Count > 0)
         {
+            int sCounter = 1;
             foreach (var f in serviceFiles)
             {
                 var name = Path.GetFileNameWithoutExtension(f.Path);
-                var sId = $"svc-{name.ToLowerInvariant()}";
+                var baseId = $"svc-{name.ToLowerInvariant()}";
+                var sId = baseId;
+                while (!usedNodeIds.Add(sId))
+                {
+                    sId = $"{baseId}-{sCounter++}";
+                }
                 serviceNodeIds.Add(sId);
 
                 nodes.Add(new DiagramNodeDto
@@ -2497,10 +2850,16 @@ public class DiagramService : IDiagramService
 
         if (dataFiles.Count > 0)
         {
+            int dCounter = 1;
             foreach (var f in dataFiles)
             {
                 var name = Path.GetFileNameWithoutExtension(f.Path);
-                var dId = $"data-{name.ToLowerInvariant()}";
+                var baseId = $"data-{name.ToLowerInvariant()}";
+                var dId = baseId;
+                while (!usedNodeIds.Add(dId))
+                {
+                    dId = $"{baseId}-{dCounter++}";
+                }
 
                 nodes.Add(new DiagramNodeDto
                 {
@@ -2515,6 +2874,7 @@ public class DiagramService : IDiagramService
 
         // 5. Database Layer
         var dbNodeId = "node-universal-db";
+        usedNodeIds.Add(dbNodeId);
         nodes.Add(new DiagramNodeDto
         {
             Id = dbNodeId,
