@@ -61,6 +61,11 @@ public class DiagramService : IDiagramService
             return await GenerateDependenciesDiagramAsync(analysisId, classification, workspaceRoot, ct);
         }
 
+        if (requestedType == "workflow" || requestedType == "cicd" || requestedType == "release")
+        {
+            return await GenerateWorkflowDiagramAsync(analysisId, classification, workspaceRoot, ct);
+        }
+
         if (string.IsNullOrEmpty(requestedType) || requestedType == "default" || requestedType == "main")
         {
             requestedType = GetDefaultDiagramType(classification.Type);
@@ -3248,6 +3253,600 @@ public class DiagramService : IDiagramService
             Edges = edges,
             DetailCards = detailCards
         };
+    }
+
+    // ========================================================================================
+    // CI/CD Workflow Diagram (Real CI/CD Grounding - GitHub Actions / GitLab / Azure / Jenkins)
+    // ========================================================================================
+
+    private async Task<DiagramDto> GenerateWorkflowDiagramAsync(
+        Guid analysisId,
+        RepositoryClassification classification,
+        string workspaceRoot,
+        CancellationToken ct)
+    {
+        var availableTypes = new[] { "workflow", "architecture", "dependencies" };
+        var workflowFiles = new List<(string FullPath, string RelativePath)>();
+
+        try
+        {
+            if (Directory.Exists(workspaceRoot))
+            {
+                var githubWorkflowsDir = Path.Combine(workspaceRoot, ".github", "workflows");
+                if (Directory.Exists(githubWorkflowsDir))
+                {
+                    var ymlFiles = Directory.GetFiles(githubWorkflowsDir, "*.yml", SearchOption.TopDirectoryOnly)
+                        .Concat(Directory.GetFiles(githubWorkflowsDir, "*.yaml", SearchOption.TopDirectoryOnly));
+                    foreach (var file in ymlFiles)
+                    {
+                        var rel = Path.GetRelativePath(workspaceRoot, file).Replace('\\', '/');
+                        workflowFiles.Add((file, rel));
+                    }
+                }
+
+                var gitlabCi = Path.Combine(workspaceRoot, ".gitlab-ci.yml");
+                if (File.Exists(gitlabCi))
+                {
+                    workflowFiles.Add((gitlabCi, ".gitlab-ci.yml"));
+                }
+
+                var azureCi = Path.Combine(workspaceRoot, "azure-pipelines.yml");
+                if (File.Exists(azureCi))
+                {
+                    workflowFiles.Add((azureCi, "azure-pipelines.yml"));
+                }
+
+                var jenkinsfile = Path.Combine(workspaceRoot, "Jenkinsfile");
+                if (File.Exists(jenkinsfile))
+                {
+                    workflowFiles.Add((jenkinsfile, "Jenkinsfile"));
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed scanning workspace for workflow files in {WorkspaceRoot}", workspaceRoot);
+        }
+
+        // Fallback to database SourceFiles if workspace disk was cleaned up
+        if (workflowFiles.Count == 0)
+        {
+            try
+            {
+                var dbFiles = await _context.SourceFiles
+                    .AsNoTracking()
+                    .Where(f => f.AnalysisId == analysisId &&
+                                (f.Path.Contains(".github/workflows/") || f.Path.Contains(".github\\workflows\\") ||
+                                 f.Path.EndsWith(".gitlab-ci.yml") || f.Path.EndsWith("azure-pipelines.yml") ||
+                                 f.Path.EndsWith("Jenkinsfile")))
+                    .ToListAsync(ct);
+
+                foreach (var dbf in dbFiles)
+                {
+                    var fullPath = Path.Combine(workspaceRoot, dbf.Path);
+                    workflowFiles.Add((fullPath, dbf.Path.Replace('\\', '/')));
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed querying database SourceFiles for workflow files");
+            }
+        }
+
+        // STRICT GROUNDING (Zero Hallucination):
+        // If NO CI/CD files exist in this repository, return explicit NotDetected status!
+        if (workflowFiles.Count == 0)
+        {
+            return new DiagramDto
+            {
+                DiagramType = "workflow",
+                RepositoryType = classification.Type == RepositoryType.Unsupported ? RepositoryType.ApiBackend : classification.Type,
+                Status = "NotDetected",
+                Message = "Không phát hiện tệp CI/CD Workflow (.github/workflows, .gitlab-ci.yml, azure-pipelines.yml hoặc Jenkinsfile) trong repository này.",
+                DatabaseDetected = false,
+                AvailableDiagramTypes = availableTypes,
+                Nodes = [],
+                Edges = [],
+                DetailCards = []
+            };
+        }
+
+        var allNodes = new List<DiagramNodeDto>();
+        var allEdges = new List<DiagramEdgeDto>();
+        var edgeSet = new HashSet<string>();
+
+        foreach (var (fullPath, relPath) in workflowFiles.Take(3))
+        {
+            string[] lines;
+            if (File.Exists(fullPath))
+            {
+                lines = await File.ReadAllLinesAsync(fullPath, ct);
+            }
+            else
+            {
+                lines = [];
+            }
+
+            if (relPath.Contains(".github/workflows/") || relPath.EndsWith(".yml") || relPath.EndsWith(".yaml"))
+            {
+                ParseGitHubActionsWorkflow(lines, relPath, allNodes, allEdges, edgeSet);
+            }
+            else if (relPath.EndsWith("Jenkinsfile"))
+            {
+                ParseJenkinsfileWorkflow(lines, relPath, allNodes, allEdges, edgeSet);
+            }
+            else
+            {
+                ParseGenericCiWorkflow(lines, relPath, allNodes, allEdges, edgeSet);
+            }
+        }
+
+        if (allNodes.Count == 0)
+        {
+            return new DiagramDto
+            {
+                DiagramType = "workflow",
+                RepositoryType = classification.Type == RepositoryType.Unsupported ? RepositoryType.ApiBackend : classification.Type,
+                Status = "NotDetected",
+                Message = "Tệp CI/CD workflow trong repository không chứa định nghĩa jobs hợp lệ để dựng sơ đồ.",
+                DatabaseDetected = false,
+                AvailableDiagramTypes = availableTypes,
+                Nodes = [],
+                Edges = [],
+                DetailCards = []
+            };
+        }
+
+        var detailCards = BuildDetailCards(allNodes, allEdges);
+
+        return new DiagramDto
+        {
+            DiagramType = "workflow",
+            RepositoryType = classification.Type == RepositoryType.Unsupported ? RepositoryType.ApiBackend : classification.Type,
+            Status = "Success",
+            DatabaseDetected = false,
+            AvailableDiagramTypes = availableTypes,
+            Nodes = allNodes,
+            Edges = allEdges,
+            DetailCards = detailCards
+        };
+    }
+
+    private static void ParseGitHubActionsWorkflow(
+        string[] lines,
+        string relPath,
+        List<DiagramNodeDto> nodes,
+        List<DiagramEdgeDto> edges,
+        HashSet<string> edgeSet)
+    {
+        var fileSlug = Path.GetFileNameWithoutExtension(relPath).ToLowerInvariant().Replace('.', '-');
+        var workflowName = fileSlug;
+        var triggers = new List<string>();
+        var triggerStartLine = 1;
+        var triggerEndLine = 1;
+
+        var inOnSection = false;
+        var inJobsSection = false;
+
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i];
+            var trimmed = line.Trim();
+            var lineNum = i + 1;
+
+            if (trimmed.StartsWith("#") || string.IsNullOrWhiteSpace(trimmed)) continue;
+
+            if (!inJobsSection && line.StartsWith("name:"))
+            {
+                var val = line["name:".Length..].Trim().Trim('\'', '"');
+                if (!string.IsNullOrEmpty(val)) workflowName = val;
+            }
+            else if (line.StartsWith("on:"))
+            {
+                inOnSection = true;
+                triggerStartLine = lineNum;
+                var afterColon = line["on:".Length..].Trim();
+                if (!string.IsNullOrEmpty(afterColon))
+                {
+                    triggers.Add(afterColon.Trim('[', ']', '\'', '"'));
+                    triggerEndLine = lineNum;
+                    inOnSection = false;
+                }
+            }
+            else if (inOnSection)
+            {
+                if (!line.StartsWith(" ") && !line.StartsWith("\t"))
+                {
+                    inOnSection = false;
+                    triggerEndLine = lineNum - 1;
+                }
+                else
+                {
+                    var key = trimmed.Split(':')[0].Trim('-', ' ', '\'');
+                    if (!string.IsNullOrEmpty(key) &&
+                        (key is "push" or "pull_request" or "workflow_dispatch" or "schedule" or "release" or "merge_group"))
+                    {
+                        if (!triggers.Contains(key)) triggers.Add(key);
+                    }
+                    triggerEndLine = lineNum;
+                }
+            }
+
+            if (line.StartsWith("jobs:"))
+            {
+                inOnSection = false;
+                inJobsSection = true;
+            }
+        }
+
+        if (triggers.Count == 0) triggers.Add("push / pull_request");
+
+        var triggerNodeId = $"wf-trigger-{fileSlug}";
+        var triggerLabel = $"Trigger: {string.Join(", ", triggers)}";
+        nodes.Add(new DiagramNodeDto
+        {
+            Id = triggerNodeId,
+            Label = triggerLabel,
+            Kind = "trigger",
+            Role = "Trigger",
+            Evidence = [relPath, $"SRC 1 (L{triggerStartLine}-L{Math.Max(triggerStartLine, triggerEndLine)})"]
+        });
+
+        var jobBlocks = new List<(string JobId, string JobName, string RunsOn, List<string> Needs, List<string> Steps, int StartLine, int EndLine)>();
+
+        inJobsSection = false;
+        string? currentJobId = null;
+        string? currentJobName = null;
+        string? currentRunsOn = null;
+        var currentNeeds = new List<string>();
+        var currentSteps = new List<string>();
+        var currentJobStart = 0;
+        var inNeedsList = false;
+
+        void FlushCurrentJob(int endLine)
+        {
+            if (!string.IsNullOrEmpty(currentJobId))
+            {
+                jobBlocks.Add((
+                    currentJobId,
+                    currentJobName ?? currentJobId,
+                    currentRunsOn ?? "ubuntu-latest",
+                    new List<string>(currentNeeds),
+                    new List<string>(currentSteps),
+                    currentJobStart,
+                    endLine
+                ));
+            }
+            currentJobId = null;
+            currentJobName = null;
+            currentRunsOn = null;
+            currentNeeds.Clear();
+            currentSteps.Clear();
+            inNeedsList = false;
+        }
+
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i];
+            var trimmed = line.Trim();
+            var lineNum = i + 1;
+
+            if (trimmed.StartsWith("#") || string.IsNullOrWhiteSpace(trimmed)) continue;
+
+            if (line.StartsWith("jobs:"))
+            {
+                inJobsSection = true;
+                continue;
+            }
+
+            if (!inJobsSection) continue;
+
+            if (!line.StartsWith(" ") && !line.StartsWith("\t"))
+            {
+                FlushCurrentJob(lineNum - 1);
+                inJobsSection = false;
+                continue;
+            }
+
+            var jobMatch = Regex.Match(line, @"^[ ]{2}([a-zA-Z0-9_\-]+):");
+            if (jobMatch.Success)
+            {
+                FlushCurrentJob(lineNum - 1);
+                currentJobId = jobMatch.Groups[1].Value;
+                currentJobStart = lineNum;
+                continue;
+            }
+
+            if (currentJobId != null)
+            {
+                if (trimmed.StartsWith("name:"))
+                {
+                    currentJobName = trimmed["name:".Length..].Trim().Trim('\'', '"');
+                }
+                else if (trimmed.StartsWith("runs-on:"))
+                {
+                    currentRunsOn = trimmed["runs-on:".Length..].Trim().Trim('\'', '"');
+                }
+                else if (trimmed.StartsWith("needs:"))
+                {
+                    var val = trimmed["needs:".Length..].Trim();
+                    if (string.IsNullOrEmpty(val))
+                    {
+                        inNeedsList = true;
+                    }
+                    else if (val.StartsWith("[") && val.EndsWith("]"))
+                    {
+                        var parts = val.Trim('[', ']').Split(',');
+                        foreach (var p in parts)
+                        {
+                            var clean = p.Trim().Trim('\'', '"');
+                            if (!string.IsNullOrEmpty(clean)) currentNeeds.Add(clean);
+                        }
+                    }
+                    else
+                    {
+                        var clean = val.Trim('\'', '"');
+                        if (!string.IsNullOrEmpty(clean)) currentNeeds.Add(clean);
+                    }
+                }
+                else if (inNeedsList && trimmed.StartsWith("-"))
+                {
+                    var clean = trimmed.TrimStart('-', ' ').Trim('\'', '"');
+                    if (!string.IsNullOrEmpty(clean)) currentNeeds.Add(clean);
+                }
+                else if (trimmed.StartsWith("- name:"))
+                {
+                    inNeedsList = false;
+                    var stepName = trimmed["- name:".Length..].Trim().Trim('\'', '"');
+                    if (!string.IsNullOrEmpty(stepName)) currentSteps.Add(stepName);
+                }
+                else if (trimmed.StartsWith("- uses:"))
+                {
+                    inNeedsList = false;
+                    var action = trimmed["- uses:".Length..].Trim().Trim('\'', '"');
+                    if (!string.IsNullOrEmpty(action)) currentSteps.Add(action);
+                }
+                else if (trimmed.StartsWith("- run:"))
+                {
+                    inNeedsList = false;
+                    var cmd = trimmed["- run:".Length..].Trim();
+                    if (!string.IsNullOrEmpty(cmd) && currentSteps.Count < 5) currentSteps.Add(cmd);
+                }
+                else if (!trimmed.StartsWith("-"))
+                {
+                    inNeedsList = false;
+                }
+            }
+        }
+
+        FlushCurrentJob(lines.Length);
+
+        if (jobBlocks.Count == 0)
+        {
+            var fallbackJobId = $"wf-job-{fileSlug}";
+            nodes.Add(new DiagramNodeDto
+            {
+                Id = fallbackJobId,
+                Label = workflowName,
+                Kind = "job",
+                Role = "Build",
+                Evidence = [relPath, $"SRC 1 (L1-L{Math.Max(1, lines.Length)})"]
+            });
+
+            var edgeKey = $"{triggerNodeId}->{fallbackJobId}";
+            if (edgeSet.Add(edgeKey))
+            {
+                edges.Add(new DiagramEdgeDto
+                {
+                    Id = $"edge-{fileSlug}-trig",
+                    From = triggerNodeId,
+                    To = fallbackJobId,
+                    Kind = "triggers",
+                    Confidence = "High",
+                    IsInferred = false,
+                    Label = "on: " + string.Join(", ", triggers)
+                });
+            }
+            return;
+        }
+
+        var jobNodeMap = new Dictionary<string, string>();
+
+        foreach (var job in jobBlocks)
+        {
+            var uniqueNodeId = $"wf-job-{fileSlug}-{job.JobId}";
+            jobNodeMap[job.JobId] = uniqueNodeId;
+
+            var role = DetermineWorkflowRole(job.JobId, job.JobName, job.Steps);
+            var evidenceLine = $"SRC 1 (L{job.StartLine}-L{job.EndLine})";
+
+            nodes.Add(new DiagramNodeDto
+            {
+                Id = uniqueNodeId,
+                Label = job.JobName,
+                Kind = "job",
+                Role = role,
+                Evidence = [relPath, evidenceLine],
+                Metadata = new
+                {
+                    Runner = job.RunsOn,
+                    StepsCount = job.Steps.Count,
+                    StepList = job.Steps
+                }
+            });
+        }
+
+        foreach (var job in jobBlocks)
+        {
+            var targetNodeId = jobNodeMap[job.JobId];
+
+            if (job.Needs.Count == 0)
+            {
+                var edgeKey = $"{triggerNodeId}->{targetNodeId}";
+                if (edgeSet.Add(edgeKey))
+                {
+                    edges.Add(new DiagramEdgeDto
+                    {
+                        Id = $"edge-{triggerNodeId}-{targetNodeId}",
+                        From = triggerNodeId,
+                        To = targetNodeId,
+                        Kind = "triggers",
+                        Confidence = "High",
+                        IsInferred = false,
+                        Label = "triggers"
+                    });
+                }
+            }
+            else
+            {
+                foreach (var neededJobId in job.Needs)
+                {
+                    if (jobNodeMap.TryGetValue(neededJobId, out var parentNodeId))
+                    {
+                        var edgeKey = $"{parentNodeId}->{targetNodeId}";
+                        if (edgeSet.Add(edgeKey))
+                        {
+                            edges.Add(new DiagramEdgeDto
+                            {
+                                Id = $"edge-{parentNodeId}-{targetNodeId}",
+                                From = parentNodeId,
+                                To = targetNodeId,
+                                Kind = "depends_on",
+                                Confidence = "High",
+                                IsInferred = false,
+                                Label = "needs: " + neededJobId
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private static string DetermineWorkflowRole(string jobId, string jobName, List<string> steps)
+    {
+        var text = $"{jobId} {jobName} {string.Join(" ", steps)}".ToLowerInvariant();
+
+        if (text.Contains("rollback") || text.Contains("revert") || text.Contains("fail"))
+            return "Rollback";
+
+        if (text.Contains("notify") || text.Contains("slack") || text.Contains("email") || text.Contains("teams") || text.Contains("discord") || text.Contains("announce"))
+            return "Communication";
+
+        if (text.Contains("deploy") || text.Contains("prod") || text.Contains("production") || text.Contains("staging") || text.Contains("k8s") || text.Contains("ecs") || text.Contains("cluster") || (text.Contains("release") && !text.Contains("draft")))
+            return "Deploy";
+
+        if (text.Contains("docker") || text.Contains("image") || text.Contains("package") || text.Contains("artifact") || text.Contains("publish") || text.Contains("build-artifact") || text.Contains("governance") || text.Contains("draft") || text.Contains("sign"))
+            return "Package";
+
+        if (text.Contains("test") || text.Contains("lint") || text.Contains("sonar") || text.Contains("scan") || text.Contains("verify") || text.Contains("check") || text.Contains("analyze") || text.Contains("audit") || text.Contains("security"))
+            return "Test";
+
+        return "Build";
+    }
+
+    private static void ParseJenkinsfileWorkflow(
+        string[] lines,
+        string relPath,
+        List<DiagramNodeDto> nodes,
+        List<DiagramEdgeDto> edges,
+        HashSet<string> edgeSet)
+    {
+        var triggerNodeId = "wf-trigger-jenkins";
+        nodes.Add(new DiagramNodeDto
+        {
+            Id = triggerNodeId,
+            Label = "Jenkins Pipeline Trigger",
+            Kind = "trigger",
+            Role = "Trigger",
+            Evidence = [relPath, "SRC 1 (L1-L10)"]
+        });
+
+        var stages = new List<(string StageName, int LineNumber)>();
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var match = Regex.Match(lines[i], @"stage\s*\(\s*['""]([^'""]+)['""]\s*\)");
+            if (match.Success)
+            {
+                stages.Add((match.Groups[1].Value, i + 1));
+            }
+        }
+
+        var prevNodeId = triggerNodeId;
+        for (var i = 0; i < stages.Count; i++)
+        {
+            var (stageName, lineNum) = stages[i];
+            var nodeId = $"wf-jenkins-stage-{i + 1}";
+            var role = DetermineWorkflowRole(stageName, stageName, []);
+
+            nodes.Add(new DiagramNodeDto
+            {
+                Id = nodeId,
+                Label = stageName,
+                Kind = "job",
+                Role = role,
+                Evidence = [relPath, $"SRC 1 (L{lineNum}-L{lineNum + 5})"]
+            });
+
+            var edgeKey = $"{prevNodeId}->{nodeId}";
+            if (edgeSet.Add(edgeKey))
+            {
+                edges.Add(new DiagramEdgeDto
+                {
+                    Id = $"edge-jenkins-{i}",
+                    From = prevNodeId,
+                    To = nodeId,
+                    Kind = i == 0 ? "triggers" : "depends_on",
+                    Confidence = "High",
+                    IsInferred = false,
+                    Label = i == 0 ? "pipeline start" : "next stage"
+                });
+            }
+            prevNodeId = nodeId;
+        }
+    }
+
+    private static void ParseGenericCiWorkflow(
+        string[] lines,
+        string relPath,
+        List<DiagramNodeDto> nodes,
+        List<DiagramEdgeDto> edges,
+        HashSet<string> edgeSet)
+    {
+        var triggerNodeId = "wf-trigger-generic";
+        nodes.Add(new DiagramNodeDto
+        {
+            Id = triggerNodeId,
+            Label = $"CI Trigger: {Path.GetFileName(relPath)}",
+            Kind = "trigger",
+            Role = "Trigger",
+            Evidence = [relPath, "SRC 1 (L1-L5)"]
+        });
+
+        var jobNodeId = "wf-job-generic";
+        nodes.Add(new DiagramNodeDto
+        {
+            Id = jobNodeId,
+            Label = $"Pipeline Execution ({Path.GetFileName(relPath)})",
+            Kind = "job",
+            Role = "Build",
+            Evidence = [relPath, $"SRC 1 (L1-L{Math.Max(1, lines.Length)})"]
+        });
+
+        var edgeKey = $"{triggerNodeId}->{jobNodeId}";
+        if (edgeSet.Add(edgeKey))
+        {
+            edges.Add(new DiagramEdgeDto
+            {
+                Id = "edge-generic-ci",
+                From = triggerNodeId,
+                To = jobNodeId,
+                Kind = "triggers",
+                Confidence = "High",
+                IsInferred = false,
+                Label = "executes"
+            });
+        }
     }
 
     // ========================================================================================
