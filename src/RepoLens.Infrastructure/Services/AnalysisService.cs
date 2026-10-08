@@ -148,6 +148,7 @@ public class AnalysisService : IAnalysisService
     {
         var analysis = await _context.Analyses
             .AsNoTracking()
+            .Include(a => a.Repository)
             .FirstOrDefaultAsync(a => a.Id == analysisId, ct);
 
         if (analysis == null)
@@ -165,7 +166,9 @@ public class AnalysisService : IAnalysisService
             progress,
             analysis.StartedAt,
             analysis.CompletedAt,
-            analysis.Error);
+            analysis.Error,
+            analysis.Repository?.Name,
+            analysis.Repository?.SourceLocation);
     }
 
     public async Task<AnalysisOverviewResponse?> GetAnalysisOverviewAsync(Guid analysisId, CancellationToken ct = default)
