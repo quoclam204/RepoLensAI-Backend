@@ -1,18 +1,31 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using RepoLens.Application.Abstractions;
 using RepoLens.Application.Common;
 using RepoLens.Application.DTOs.Files;
 using RepoLens.Infrastructure.Persistence;
+using RepoLens.Infrastructure.Storage;
 
 namespace RepoLens.Infrastructure.Services;
 
 public class FileService : IFileService
 {
     private readonly RepoLensDbContext _context;
+    private readonly ITemporaryWorkspaceManager? _workspaceManager;
+    private readonly WorkspaceOptions _workspaceOptions;
+    private readonly ILogger<FileService>? _logger;
 
-    public FileService(RepoLensDbContext context)
+    public FileService(
+        RepoLensDbContext context,
+        ITemporaryWorkspaceManager? workspaceManager = null,
+        IOptions<WorkspaceOptions>? workspaceOptions = null,
+        ILogger<FileService>? logger = null)
     {
         _context = context;
+        _workspaceManager = workspaceManager;
+        _workspaceOptions = workspaceOptions?.Value ?? new WorkspaceOptions();
+        _logger = logger;
     }
 
     public async Task<PagedResult<FileItemDto>> GetFilesAsync(Guid analysisId, FileFilterParams filter, CancellationToken ct = default)
@@ -33,7 +46,23 @@ public class FileService : IFileService
 
         if (!string.IsNullOrWhiteSpace(filter.Language))
         {
-            query = query.Where(f => f.Language.ToLower() == filter.Language.ToLower());
+            var lang = filter.Language.Trim().ToLower();
+            if (lang == "c#" || lang == "csharp" || lang == "cs")
+            {
+                query = query.Where(f => f.Language.ToLower() == "csharp" || f.Language.ToLower() == "cs" || f.Path.EndsWith(".cs"));
+            }
+            else if (lang == "typescript" || lang == "ts")
+            {
+                query = query.Where(f => f.Language.ToLower() == "typescript" || f.Language.ToLower() == "ts" || f.Path.EndsWith(".ts") || f.Path.EndsWith(".tsx"));
+            }
+            else if (lang == "javascript" || lang == "js")
+            {
+                query = query.Where(f => f.Language.ToLower() == "javascript" || f.Language.ToLower() == "js" || f.Path.EndsWith(".js") || f.Path.EndsWith(".jsx"));
+            }
+            else
+            {
+                query = query.Where(f => f.Language.ToLower() == lang || f.Path.ToLower().EndsWith("." + lang));
+            }
         }
 
         if (!string.IsNullOrWhiteSpace(filter.ProjectId) && Guid.TryParse(filter.ProjectId, out var projId))
@@ -114,15 +143,50 @@ public class FileService : IFileService
             return null;
         }
 
-        // TODO: [Giả định cần chốt với nhóm] Trong tương lai file content được đọc từ Storage/Workspace T031.
-        // Hiện tại nếu file tồn tại trên ổ đĩa cục bộ sẽ đọc trực tiếp, ngược lại trả về thông báo đã được lưu trữ an toàn.
         string content;
         int lineCount = 0;
 
-        if (File.Exists(file.Path))
+        string? resolvedPath = null;
+        if (_workspaceManager != null)
         {
-            content = await File.ReadAllTextAsync(file.Path, ct);
-            lineCount = content.Split('\n').Length;
+            var workspace = await _workspaceManager.GetWorkspaceAsync(analysisId, ct);
+            if (workspace != null && !string.IsNullOrWhiteSpace(workspace.RootPath))
+            {
+                var candidate = Path.Combine(workspace.RootPath, file.Path);
+                if (File.Exists(candidate))
+                {
+                    resolvedPath = candidate;
+                }
+            }
+        }
+
+        if (resolvedPath == null && !string.IsNullOrWhiteSpace(_workspaceOptions.BaseDirectory))
+        {
+            var candidate = Path.Combine(_workspaceOptions.BaseDirectory, analysisId.ToString("D"), file.Path);
+            if (File.Exists(candidate))
+            {
+                resolvedPath = candidate;
+            }
+        }
+
+        if (resolvedPath == null && File.Exists(file.Path))
+        {
+            resolvedPath = file.Path;
+        }
+
+        if (resolvedPath != null && File.Exists(resolvedPath))
+        {
+            try
+            {
+                content = await File.ReadAllTextAsync(resolvedPath, ct);
+                lineCount = content.Split('\n').Length;
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Failed to read content for file {FilePath} at {ResolvedPath}", file.Path, resolvedPath);
+                content = $"// Error reading file content from {file.Path}: {ex.Message}";
+                lineCount = 1;
+            }
         }
         else
         {

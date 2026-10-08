@@ -11,4 +11,6 @@ public record AnalysisStatusResponse(
     int Progress,
     DateTimeOffset StartedAt,
     DateTimeOffset? CompletedAt,
-    string? Error);
+    string? Error,
+    string? RepositoryName = null,
+    string? RepositoryUrl = null);
