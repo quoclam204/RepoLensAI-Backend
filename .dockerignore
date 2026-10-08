@@ -1,0 +1,10 @@
+**/.git
+**/.vs
+**/.idea
+**/bin
+**/obj
+**/TestResults
+**/*.user
+docker-compose*.yml
+.env*
+repolens-workspaces/
