@@ -40,6 +40,16 @@ public class RepositoryScanner
         ".cs"
     };
 
+    private static readonly HashSet<string> RazorExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".cshtml", ".razor"
+    };
+
+    private static readonly HashSet<string> WebAssetExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".css", ".scss", ".sass", ".less"
+    };
+
     private static readonly HashSet<string> TypeScriptExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".ts", ".tsx"
@@ -48,6 +58,31 @@ public class RepositoryScanner
     private static readonly HashSet<string> JavaScriptExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".js", ".jsx", ".mjs", ".cjs"
+    };
+
+    private static readonly HashSet<string> JavaExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".java", ".kt", ".kts"
+    };
+
+    private static readonly HashSet<string> PythonExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".py"
+    };
+
+    private static readonly HashSet<string> GoExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".go"
+    };
+
+    private static readonly HashSet<string> PhpExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".php"
+    };
+
+    private static readonly HashSet<string> RustExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".rs"
     };
 
     private static readonly HashSet<string> ConfigExtensions = new(StringComparer.OrdinalIgnoreCase)
@@ -255,6 +290,66 @@ public class RepositoryScanner
                     continue;
                 }
 
+                // Check Java Maven / Gradle manifests
+                if (fileName.Equals("pom.xml", StringComparison.OrdinalIgnoreCase) ||
+                    fileName.Equals("build.gradle", StringComparison.OrdinalIgnoreCase) ||
+                    fileName.Equals("build.gradle.kts", StringComparison.OrdinalIgnoreCase))
+                {
+                    var parentDirName = Path.GetFileName(Path.GetDirectoryName(fileFullPath)) ?? "root";
+                    projects.Add(new ScannedProject(
+                        ProjectName: parentDirName,
+                        RelativePath: relativePath,
+                        FullPath: fileFullPath.Replace('\\', '/'),
+                        ProjectType: "Java"));
+                }
+
+                // Check Python manifests
+                if (fileName.Equals("requirements.txt", StringComparison.OrdinalIgnoreCase) ||
+                    fileName.Equals("pyproject.toml", StringComparison.OrdinalIgnoreCase) ||
+                    fileName.Equals("setup.py", StringComparison.OrdinalIgnoreCase) ||
+                    fileName.Equals("Pipfile", StringComparison.OrdinalIgnoreCase))
+                {
+                    var parentDirName = Path.GetFileName(Path.GetDirectoryName(fileFullPath)) ?? "root";
+                    projects.Add(new ScannedProject(
+                        ProjectName: parentDirName,
+                        RelativePath: relativePath,
+                        FullPath: fileFullPath.Replace('\\', '/'),
+                        ProjectType: "Python"));
+                }
+
+                // Check Go manifest
+                if (fileName.Equals("go.mod", StringComparison.OrdinalIgnoreCase))
+                {
+                    var parentDirName = Path.GetFileName(Path.GetDirectoryName(fileFullPath)) ?? "root";
+                    projects.Add(new ScannedProject(
+                        ProjectName: parentDirName,
+                        RelativePath: relativePath,
+                        FullPath: fileFullPath.Replace('\\', '/'),
+                        ProjectType: "Go"));
+                }
+
+                // Check PHP Composer manifest
+                if (fileName.Equals("composer.json", StringComparison.OrdinalIgnoreCase))
+                {
+                    var parentDirName = Path.GetFileName(Path.GetDirectoryName(fileFullPath)) ?? "root";
+                    projects.Add(new ScannedProject(
+                        ProjectName: parentDirName,
+                        RelativePath: relativePath,
+                        FullPath: fileFullPath.Replace('\\', '/'),
+                        ProjectType: "PHP"));
+                }
+
+                // Check Rust Cargo manifest
+                if (fileName.Equals("Cargo.toml", StringComparison.OrdinalIgnoreCase))
+                {
+                    var parentDirName = Path.GetFileName(Path.GetDirectoryName(fileFullPath)) ?? "root";
+                    projects.Add(new ScannedProject(
+                        ProjectName: parentDirName,
+                        RelativePath: relativePath,
+                        FullPath: fileFullPath.Replace('\\', '/'),
+                        ProjectType: "Rust"));
+                }
+
                 // Check generated and secret/env files to ignore (T033)
                 if (IsIgnoredFile(fileName))
                 {
@@ -272,6 +367,26 @@ public class RepositoryScanner
                         Extension: ext,
                         SizeInBytes: file.Length,
                         Category: "CSharp",
+                        Hash: fileHash));
+                }
+                else if (RazorExtensions.Contains(ext))
+                {
+                    sourceFiles.Add(new ScannedFile(
+                        RelativePath: relativePath,
+                        FullPath: fileFullPath.Replace('\\', '/'),
+                        Extension: ext,
+                        SizeInBytes: file.Length,
+                        Category: "Razor",
+                        Hash: fileHash));
+                }
+                else if (WebAssetExtensions.Contains(ext))
+                {
+                    sourceFiles.Add(new ScannedFile(
+                        RelativePath: relativePath,
+                        FullPath: fileFullPath.Replace('\\', '/'),
+                        Extension: ext,
+                        SizeInBytes: file.Length,
+                        Category: "WebAsset",
                         Hash: fileHash));
                 }
                 else if (TypeScriptExtensions.Contains(ext))
@@ -292,6 +407,56 @@ public class RepositoryScanner
                         Extension: ext,
                         SizeInBytes: file.Length,
                         Category: "JavaScript",
+                        Hash: fileHash));
+                }
+                else if (JavaExtensions.Contains(ext))
+                {
+                    sourceFiles.Add(new ScannedFile(
+                        RelativePath: relativePath,
+                        FullPath: fileFullPath.Replace('\\', '/'),
+                        Extension: ext,
+                        SizeInBytes: file.Length,
+                        Category: "Java",
+                        Hash: fileHash));
+                }
+                else if (PythonExtensions.Contains(ext))
+                {
+                    sourceFiles.Add(new ScannedFile(
+                        RelativePath: relativePath,
+                        FullPath: fileFullPath.Replace('\\', '/'),
+                        Extension: ext,
+                        SizeInBytes: file.Length,
+                        Category: "Python",
+                        Hash: fileHash));
+                }
+                else if (GoExtensions.Contains(ext))
+                {
+                    sourceFiles.Add(new ScannedFile(
+                        RelativePath: relativePath,
+                        FullPath: fileFullPath.Replace('\\', '/'),
+                        Extension: ext,
+                        SizeInBytes: file.Length,
+                        Category: "Go",
+                        Hash: fileHash));
+                }
+                else if (PhpExtensions.Contains(ext))
+                {
+                    sourceFiles.Add(new ScannedFile(
+                        RelativePath: relativePath,
+                        FullPath: fileFullPath.Replace('\\', '/'),
+                        Extension: ext,
+                        SizeInBytes: file.Length,
+                        Category: "PHP",
+                        Hash: fileHash));
+                }
+                else if (RustExtensions.Contains(ext))
+                {
+                    sourceFiles.Add(new ScannedFile(
+                        RelativePath: relativePath,
+                        FullPath: fileFullPath.Replace('\\', '/'),
+                        Extension: ext,
+                        SizeInBytes: file.Length,
+                        Category: "Rust",
                         Hash: fileHash));
                 }
                 else if (DocumentationExtensions.Contains(ext))
